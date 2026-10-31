@@ -5,7 +5,7 @@ import os
 import threading
 
 from PySide6.QtCore import QByteArray, QFileSystemWatcher, QObject, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QDesktopServices, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QKeySequence
 from PySide6.QtCore import QLocale, QUrl
 from PySide6.QtWidgets import (
     QApplication,
@@ -52,6 +52,7 @@ from .editor import SoundscapeEditor
 from .positions import PositionsView
 from .profiles_dialog import ProfilesDialog
 from .script_editor import ScriptEditor
+from .theme import THEMES, apply_theme
 
 WIKI_URL = "https://developer.valvesoftware.com/wiki/Soundscape"
 REPO_URL = "https://github.com/Midlou/Source-Engine-Soundscape-Previewer"
@@ -101,6 +102,9 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Soundscape Previewer")
         self.resize(1500, 900)
         self.settings = Settings.load()
+        if self.settings.theme not in THEMES:
+            self.settings.theme = "system"
+        apply_theme(self.settings.theme)
         self.content: GameContent | None = None
         self.files: list[SoundscapeFile] = []
         self.current_file: SoundscapeFile | None = None
@@ -195,6 +199,8 @@ class MainWindow(QMainWindow):
         self.browser.playSoundscape.connect(self._play_game_soundscape)
         self.browser.copySoundscape.connect(self._copy_game_soundscape)
         self.browser.useSoundscape.connect(self._add_subscape)
+        self.browser.chk_click_play.setChecked(self.settings.click_to_play)
+        self.browser.chk_click_play.toggled.connect(self._click_play_toggled)
         dock = QDockWidget("Sound browser", self)
         dock.setObjectName("dock_browser")
         dock.setWidget(self.browser)
@@ -319,6 +325,16 @@ class MainWindow(QMainWindow):
         for d in (self.dock_files, self.dock_browser, self.dock_positions):
             m.addAction(d.toggleViewAction())
         act(m, "Reset positions view", self.positions.reset_view)
+        m.addSeparator()
+        theme_menu = m.addMenu("Theme")
+        group = QActionGroup(self)
+        group.setExclusive(True)
+        for key, label in THEMES.items():
+            a = QAction("System (follow Windows)" if key == "system" else label, self, checkable=True)
+            a.setChecked(key == self.settings.theme)
+            a.triggered.connect(lambda _checked=False, k=key: self._set_theme(k))
+            group.addAction(a)
+            theme_menu.addAction(a)
         m = mb.addMenu("&Help")
         act(m, "Soundscape documentation (wiki)", lambda: QDesktopServices.openUrl(QUrl(WIKI_URL)))
         act(m, "About Soundscape Previewer", self._about)
@@ -938,8 +954,17 @@ class MainWindow(QMainWindow):
         self.engine.preview(path, loop)
         self.statusBar().showMessage(f"Previewing {path}", 3000)
 
+    def _set_theme(self, theme: str) -> None:
+        self.settings.theme = theme
+        apply_theme(theme)
+        self._save_settings_soon()
+
     def _follow_toggled(self, on: bool) -> None:
         self.settings.auto_play = on
+        self._save_settings_soon()
+
+    def _click_play_toggled(self, on: bool) -> None:
+        self.settings.click_to_play = on
         self._save_settings_soon()
 
     def _force_loop_toggled(self, on: bool) -> None:

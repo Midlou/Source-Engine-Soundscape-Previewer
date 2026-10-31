@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import re
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QSyntaxHighlighter, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import QLabel, QPlainTextEdit, QVBoxLayout, QWidget
+
+from .theme import is_dark
 
 
 def _fmt(color: str, bold: bool = False, italic: bool = False) -> QTextCharFormat:
@@ -25,14 +27,22 @@ class KVHighlighter(QSyntaxHighlighter):
         re.I,
     )
 
+    LIGHT = {"string": "#16a34a", "rule": "#2563eb", "key": "#9333ea", "comment": "#6b7280", "brace": "#d97706", "scape": "#dc2626"}
+    DARK = {"string": "#86efac", "rule": "#60a5fa", "key": "#d8b4fe", "comment": "#9ca3af", "brace": "#fbbf24", "scape": "#f87171"}
+
     def __init__(self, doc):
         super().__init__(doc)
-        self.f_string = _fmt("#16a34a")
-        self.f_rule = _fmt("#2563eb", bold=True)
-        self.f_key = _fmt("#9333ea")
-        self.f_comment = _fmt("#6b7280", italic=True)
-        self.f_brace = _fmt("#d97706", bold=True)
-        self.f_scape = _fmt("#dc2626", bold=True)
+        self.set_dark(is_dark())
+
+    def set_dark(self, dark: bool) -> None:
+        c = self.DARK if dark else self.LIGHT
+        self.f_string = _fmt(c["string"])
+        self.f_rule = _fmt(c["rule"], bold=True)
+        self.f_key = _fmt(c["key"])
+        self.f_comment = _fmt(c["comment"], italic=True)
+        self.f_brace = _fmt(c["brace"], bold=True)
+        self.f_scape = _fmt(c["scape"], bold=True)
+        self.rehighlight()
 
     def highlightBlock(self, text: str) -> None:
         for m in re.finditer(r'"[^"]*"', text):
@@ -80,6 +90,11 @@ class ScriptEditor(QWidget):
         self._timer = QTimer(self, singleShot=True, interval=350)
         self._timer.timeout.connect(lambda: self.textEdited.emit(self.edit.toPlainText()))
         self.edit.textChanged.connect(self._changed)
+
+    def changeEvent(self, e):
+        if e.type() == QEvent.PaletteChange:
+            self.highlighter.set_dark(is_dark())
+        super().changeEvent(e)
 
     def _changed(self):
         if not self._programmatic:

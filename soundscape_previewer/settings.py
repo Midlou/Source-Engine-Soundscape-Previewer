@@ -54,7 +54,9 @@ class Settings:
     open_files: list[str] = field(default_factory=list)
     master_volume: float = 0.8
     auto_play: bool = True
+    theme: str = "system"  # "system", "light" or "dark"
     force_loop: bool = False
+    click_to_play: bool = True
     positions: list | None = None
     enabled_positions: list | None = None
     listener: list | None = None

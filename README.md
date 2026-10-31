@@ -23,7 +23,8 @@ it in seconds.
 - **Game profiles.** Create a profile per game (e.g. *Team Fortress 2*) and
   choose which `_dir.vpk` files and loose content folders it uses. A TF2 profile
   is detected and created automatically from your Steam libraries.
-- **Sound browser.** Search and preview all sounds in the profile's VPKs. It
+- **Sound browser.** Search and preview all sounds in the profile's VPKs
+  (single-click or double-click to play). It
   shows duration, sample rate, which VPK each sound comes from, and whether a
   WAV has a cue point (needed to loop in-game).
   - Soundscript entries (`Ambient.Wind`...) and the game's own soundscapes are
@@ -34,7 +35,7 @@ it in seconds.
 - **Two ways to edit:**
   - a structured editor for `playlooping`, `playrandom` and `playsoundscape`
     rules, with drag & drop from the sound browser and per-rule
-    **mute / solo**;
+    **mute / solo** (silenced rules are greyed out);
   - a script editor with syntax highlighting, applied live as you type.
     Comments in your files are preserved.
 - **External editor support.** The file is watched on disk. Save it from
@@ -53,6 +54,10 @@ it in seconds.
   - names that clash with other soundscapes
   - duplicate loops (only one instance plays in-game)
   - positioned random sounds without attenuation
+
+- **Light and dark themes.** Follow Windows or pick one in View → Theme.
+
+See [CHANGELOG.md](CHANGELOG.md) for what changed in each version.
 
 ## Download
 
@@ -115,8 +120,9 @@ to `main`:
 3. If `__version__` in `soundscape_previewer/__init__.py` has no release yet,
    it publishes a GitHub Release `v<version>` with the zip attached.
 
-To publish a new version, bump `__version__` (e.g. to `"1.1"`) and push to
-`main`.
+To publish a new version, add a `## <version>` section to
+[CHANGELOG.md](CHANGELOG.md) (it becomes the release notes), bump
+`__version__` and push to `main`.
 
 ## Usage
 

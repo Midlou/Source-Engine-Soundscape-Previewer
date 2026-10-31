@@ -4,6 +4,8 @@ from __future__ import annotations
 from PySide6.QtCore import QMimeData, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
+    QCheckBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -12,6 +14,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QStackedWidget,
     QTabWidget,
+    QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -69,7 +72,13 @@ class SoundBrowser(QWidget):
         fl = QVBoxLayout(files)
         fl.setContentsMargins(0, 4, 0, 0)
         self.search = _search_box("Search sounds (e.g. ambient wind loop)")
-        fl.addWidget(self.search)
+        row = QHBoxLayout()
+        row.addWidget(self.search, 1)
+        self.btn_collapse = QToolButton()
+        self.btn_collapse.setText("Collapse all")
+        self.btn_collapse.setToolTip("Close all open folders")
+        row.addWidget(self.btn_collapse)
+        fl.addLayout(row)
         self.stack = QStackedWidget()
         self.tree = _DragTree()
         self.tree.setHeaderHidden(True)
@@ -143,14 +152,21 @@ class SoundBrowser(QWidget):
         cl.addLayout(row)
         self.tabs.addTab(scapes, "Game soundscapes")
 
+        self.chk_click_play = QCheckBox("Play sounds with a single click")
+        self.chk_click_play.setToolTip("Sound files and soundscripts play as soon as you click them")
+        lay.addWidget(self.chk_click_play)
+
         self._timer = QTimer(self, singleShot=True, interval=200)
         self._timer.timeout.connect(self._run_search)
         self.search.textChanged.connect(lambda _: self._timer.start())
         self.gs_search.textChanged.connect(self._fill_game_sounds)
         self.ss_search.textChanged.connect(self._fill_soundscapes)
         self.tree.itemExpanded.connect(self._expand)
-        self.tree.itemDoubleClicked.connect(lambda it, _c: self._play(False) if it.data(0, Qt.UserRole) else None)
-        self.results.itemDoubleClicked.connect(lambda _it: self._play(False))
+        self.btn_collapse.clicked.connect(self._collapse_all)
+        self.tree.itemDoubleClicked.connect(lambda it, _c: self._play(False) if it.data(0, Qt.UserRole) and not self._clicked() else None)
+        self.results.itemDoubleClicked.connect(lambda _it: self._clicked() or self._play(False))
+        self.tree.itemClicked.connect(lambda it, _c: self._clicked() and it.data(0, Qt.UserRole) and self._play(False))
+        self.results.itemClicked.connect(lambda _it: self._clicked() and self._play(False))
         self.tree.itemSelectionChanged.connect(self._sel_changed)
         self.results.itemSelectionChanged.connect(self._sel_changed)
         self.btn_play.clicked.connect(lambda: self._play(False))
@@ -158,7 +174,8 @@ class SoundBrowser(QWidget):
         self.btn_stop.clicked.connect(self.stopRequested)
         self.btn_use.clicked.connect(self._use)
         self.gs_list.currentItemChanged.connect(self._gs_selected)
-        self.gs_list.itemDoubleClicked.connect(lambda _it: self._gs_play())
+        self.gs_list.itemDoubleClicked.connect(lambda _it: self._clicked() or self._gs_play())
+        self.gs_list.itemClicked.connect(lambda _it: self._clicked() and self._gs_play())
         self.gs_play.clicked.connect(self._gs_play)
         self.gs_stop.clicked.connect(self.stopRequested)
         self.gs_use.clicked.connect(lambda: self.gs_list.currentItem() and self.useRequested.emit(self.gs_list.currentItem().text()))
@@ -179,7 +196,7 @@ class SoundBrowser(QWidget):
         if content is None:
             self.info.setText("No profile loaded. Create one in Profiles → Manage profiles.")
         else:
-            self.info.setText(f"{len(self._paths):,} sounds. Double-click to play, drag into a rule to use.")
+            self.info.setText(f"{len(self._paths):,} sounds. {'Click' if self.chk_click_play.isChecked() else 'Double-click'} to play, drag into a rule to use.")
 
     def _build_tree(self) -> None:
         self.tree.clear()
@@ -211,6 +228,11 @@ class SoundBrowser(QWidget):
         if item.childCount() == 1 and item.child(0).text(0) == _PLACEHOLDER:
             item.takeChild(0)
             self._add_children(item, item.data(0, Qt.UserRole + 1))
+
+    def _collapse_all(self) -> None:
+        self.search.clear()  # show the folder tree if a search was active
+        self.tree.collapseAll()
+        self.tree.scrollToTop()
 
     def _run_search(self) -> None:
         terms = self.search.text().lower().split()
@@ -247,6 +269,10 @@ class SoundBrowser(QWidget):
         if s and self.info_provider:
             self.info.setText(self.info_provider(s))
         self.selectionChanged.emit()
+
+    def _clicked(self) -> bool:
+        """True when a plain click should play (Ctrl/Shift clicks only select)."""
+        return self.chk_click_play.isChecked() and not QApplication.keyboardModifiers() & (Qt.ControlModifier | Qt.ShiftModifier)
 
     def _play(self, loop: bool) -> None:
         s = self.selected_sound()

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -493,7 +493,6 @@ class SoundscapeEditor(QWidget):
     def _fill_item(self, it: QTreeWidgetItem, rule: KVNode) -> None:
         k = rule.key.lower()
         it.setText(self.COL_TYPE, RULE_LABELS.get(k, rule.key))
-        it.setForeground(self.COL_TYPE, QBrush(QColor(RULE_COLORS.get(k, "#888"))))
         it.setText(self.COL_SOUND, describe_rule(rule))
         it.setToolTip(self.COL_SOUND, "\n".join(c.value or "" for c in rule.children or () if c.key.lower() in ("wave", "name")) or "")
         it.setText(self.COL_POS, _position_text(rule) if k != RULE_SUBSCAPE else "")
@@ -504,6 +503,36 @@ class SoundscapeEditor(QWidget):
         if k == RULE_RANDOM:
             self._fill_waves(it, rule)
         self._update_live(it, rule)
+        self._update_silenced(it, rule)
+
+    def _is_silenced(self, rule: KVNode) -> bool:
+        return rule.uid in self.muted or (bool(self.soloed) and rule.uid not in self.soloed)
+
+    def _update_silenced(self, it: QTreeWidgetItem, rule: KVNode) -> None:
+        """Grey out muted rules, and every rule outside the solo set."""
+        grey = QBrush(self.palette().placeholderText().color())
+        silenced = self._is_silenced(rule)
+        normal = QBrush()  # default text color of the current theme
+        it.setForeground(self.COL_TYPE, grey if silenced else QBrush(QColor(RULE_COLORS.get(rule.key.lower(), "#888"))))
+        for col in (self.COL_SOUND, self.COL_POS, self.COL_NEXT):
+            it.setForeground(col, grey if silenced else normal)
+        for i in range(it.childCount()):
+            child = it.child(i)
+            child.setForeground(self.COL_TYPE, grey)
+            for col in (self.COL_SOUND, self.COL_NEXT):
+                child.setForeground(col, grey if silenced else normal)
+
+    def _update_all_silenced(self) -> None:
+        self._loading = True
+        for i in range(self.rules.topLevelItemCount()):
+            it = self.rules.topLevelItem(i)
+            self._update_silenced(it, it.data(0, Qt.UserRole))
+        self._loading = False
+
+    def changeEvent(self, e):
+        if e.type() == QEvent.PaletteChange:
+            self._update_all_silenced()
+        super().changeEvent(e)
 
     def _update_live(self, it: QTreeWidgetItem, rule: KVNode) -> None:
         """Next-play timer and bold for the rndwave entry playing right now."""
@@ -622,9 +651,11 @@ class SoundscapeEditor(QWidget):
         rule = item.data(0, Qt.UserRole)
         if column == self.COL_MUTE:
             (self.muted.add if item.checkState(column) == Qt.Checked else self.muted.discard)(rule.uid)
+            self._update_all_silenced()
             self.mutesChanged.emit()
         elif column == self.COL_SOLO:
             (self.soloed.add if item.checkState(column) == Qt.Checked else self.soloed.discard)(rule.uid)
+            self._update_all_silenced()
             self.mutesChanged.emit()
 
     def _put(self, key, value):

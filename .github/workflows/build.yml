@@ -73,8 +73,10 @@ jobs:
             echo "Release v$VERSION already exists; bump __version__ to publish a new one."
             exit 0
           fi
+          # release notes: this version's section of CHANGELOG.md, then download instructions
+          awk -v v="## $VERSION" '$0 == v {on=1; next} /^## / {on=0} on' CHANGELOG.md > notes.md
+          printf '\nDownload **%s**, extract it anywhere and run **SoundscapePreviewer.exe**. Settings are stored in %%APPDATA%%\\SoundscapePreviewer.\n' "$ZIP" >> notes.md
           gh release create "v$VERSION" "$ZIP" \
             --target "$GITHUB_SHA" \
             --title "Soundscape Previewer $VERSION" \
-            --generate-notes \
-            --notes "Download **$ZIP**, extract it anywhere and run **SoundscapePreviewer.exe**. Settings are stored in %APPDATA%\\SoundscapePreviewer."
+            --notes-file notes.md
