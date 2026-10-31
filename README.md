@@ -153,3 +153,12 @@ soundscape_previewer/
 
 Settings and profiles are saved in `data/settings.json`. This file is not
 committed.
+
+## License
+
+[MIT](LICENSE) © 2026 Midlou
+
+Dependencies keep their own licenses: PySide6/Qt (LGPL v3), numpy (BSD),
+sounddevice (MIT), soundfile (BSD, bundles libsndfile under LGPL). This
+project does not include any Valve game content. Sounds are read at runtime
+from your own game installation.
