@@ -322,6 +322,7 @@ class WaveChoice:
     path: str  # normalized, relative to sound/
     volume: tuple[float, float] = (1.0, 1.0)  # multiplier from a soundscript
     pitch: tuple[float, float] = (100.0, 100.0)
+    entry: int = 0  # index of the rndwave entry it came from
 
 
 @dataclass
@@ -451,9 +452,16 @@ class PlanBuilder:
                     )
                 )
             elif k == RULE_RANDOM:
+                # entry = index among the rndwave's "wave" keys (matches the editor's rows)
+                rnd = rule.find("rndwave")
+                entries = [c.value for c in rnd.find_all("wave")] if rnd is not None and rnd.is_block else []
                 waves: list[WaveChoice] = []
-                for w in rule_waves(rule):
-                    waves += self.resolve_wave(w)
+                for entry, w in enumerate(entries):
+                    if not w or not w.strip():
+                        continue
+                    for choice in self.resolve_wave(w):
+                        choice.entry = entry
+                        waves.append(choice)
                 if not waves:
                     continue
                 vol = parse_range(rule.get("volume"), (1.0, 1.0))

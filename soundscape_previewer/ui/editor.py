@@ -312,7 +312,7 @@ class SoundscapeEditor(QWidget):
     mutesChanged = Signal()
     ruleSelected = Signal(object)
 
-    COL_TYPE, COL_SOUND, COL_POS, COL_MUTE, COL_SOLO = range(5)
+    COL_TYPE, COL_SOUND, COL_POS, COL_NEXT, COL_MUTE, COL_SOLO = range(6)
 
     def __init__(self, selected_sound: Callable[[], str | None], soundscape_names: Callable[[], list[str]]):
         super().__init__()
@@ -321,6 +321,9 @@ class SoundscapeEditor(QWidget):
         self.soloed: set[int] = set()
         self._loading = False
         self.active_uids: set[int] = set()
+        self.active_waves: dict[int, set[int]] = {}  # rule uid -> rndwave entries playing now
+        self.timers: dict[int, tuple[float, int]] = {}  # rule uid -> (seconds to next play, entry)
+        self.expanded_uids: set[int] = set()
 
         outer = QVBoxLayout(self)
         top = QGroupBox("Soundscape")
@@ -359,13 +362,18 @@ class SoundscapeEditor(QWidget):
             bar.addWidget(b)
         ll.addLayout(bar)
         self.rules = QTreeWidget()
-        self.rules.setHeaderLabels(["Rule", "Sound / soundscape", "Pos", "M", "S"])
-        self.rules.setRootIsDecorated(False)
+        self.rules.setHeaderLabels(["Rule", "Sound / soundscape", "Pos", "Next", "M", "S"])
+        self.rules.setRootIsDecorated(True)
+        self.rules.setExpandsOnDoubleClick(False)
+        self.rules.setTextElideMode(Qt.ElideMiddle)  # keep file names visible in long paths
         self.rules.setUniformRowHeights(True)
         h = self.rules.header()
         h.setSectionResizeMode(self.COL_SOUND, QHeaderView.Stretch)
         for c in (self.COL_TYPE, self.COL_POS, self.COL_MUTE, self.COL_SOLO):
             h.setSectionResizeMode(c, QHeaderView.ResizeToContents)
+        h.setSectionResizeMode(self.COL_NEXT, QHeaderView.Fixed)
+        self.rules.setColumnWidth(self.COL_NEXT, self.fontMetrics().horizontalAdvance("▶ playing") + 12)
+        self.rules.headerItem().setToolTip(self.COL_NEXT, "Time until a random rule plays again, and which sound it picked")
         self.rules.headerItem().setToolTip(self.COL_MUTE, "Mute (preview only, not saved)")
         self.rules.headerItem().setToolTip(self.COL_SOLO, "Solo (preview only, not saved)")
         ll.addWidget(self.rules, 1)
@@ -389,7 +397,7 @@ class SoundscapeEditor(QWidget):
         for w in (self.empty, self.loop_form, self.random_form, self.sub_form):
             self.stack.addWidget(w)
         split.addWidget(self.stack)
-        split.setSizes([420, 480])
+        split.setSizes([500, 440])
         outer.addWidget(split, 1)
 
         for f in (self.loop_form, self.random_form, self.sub_form):
@@ -406,6 +414,9 @@ class SoundscapeEditor(QWidget):
         self.btn_down.clicked.connect(lambda: self._move(1))
         self.rules.currentItemChanged.connect(self._select)
         self.rules.itemChanged.connect(self._item_changed)
+        self.rules.itemDoubleClicked.connect(self._item_double_clicked)
+        self.rules.itemExpanded.connect(lambda it: self.expanded_uids.add(it.data(0, Qt.UserRole).uid))
+        self.rules.itemCollapsed.connect(lambda it: self.expanded_uids.discard(it.data(0, Qt.UserRole).uid))
 
         self.name.editingFinished.connect(self._rename)
         self.dsp.valueChanged.connect(lambda v: self._put("dsp", None if v < 0 else fmt(v)))
@@ -420,8 +431,15 @@ class SoundscapeEditor(QWidget):
         return [c for c in self.scape.children if c.is_block] if self.scape else []
 
     def current_rule(self) -> KVNode | None:
+        """The selected rule (also when one of its rndwave entries is selected)."""
         it = self.rules.currentItem()
         return it.data(0, Qt.UserRole) if it else None
+
+    @staticmethod
+    def _rule_item(it: QTreeWidgetItem | None) -> QTreeWidgetItem | None:
+        if it is None:
+            return None
+        return it.parent() if it.parent() is not None else it
 
     def set_soundscape(self, scape: KVNode | None, select_index: int | None = None) -> None:
         self.scape = scape
@@ -461,6 +479,7 @@ class SoundscapeEditor(QWidget):
             it.setCheckState(self.COL_MUTE, Qt.Checked if rule.uid in self.muted else Qt.Unchecked)
             it.setCheckState(self.COL_SOLO, Qt.Checked if rule.uid in self.soloed else Qt.Unchecked)
             self.rules.addTopLevelItem(it)
+            it.setExpanded(rule.uid in self.expanded_uids)
             if rule is cur or (select_index is not None and i == select_index):
                 select_item = it
         self._loading = False
@@ -482,16 +501,76 @@ class SoundscapeEditor(QWidget):
         font = it.font(self.COL_SOUND)
         font.setBold(active)
         it.setFont(self.COL_SOUND, font)
+        if k == RULE_RANDOM:
+            self._fill_waves(it, rule)
+        self._update_live(it, rule)
 
-    def set_active(self, uids: set[int]) -> None:
-        """Highlight rules that are currently audible."""
-        if uids == self.active_uids:
+    def _update_live(self, it: QTreeWidgetItem, rule: KVNode) -> None:
+        """Next-play timer and bold for the rndwave entry playing right now."""
+        timer = self.timers.get(rule.uid)
+        it.setText(self.COL_NEXT, f"{max(0.0, timer[0]):.1f}s" if timer else "")
+        playing = self.active_waves.get(rule.uid, set())
+        for i in range(it.childCount()):
+            child = it.child(i)
+            idx = child.data(0, Qt.UserRole + 1)
+            if idx in playing:
+                text = "▶ playing"
+            elif timer and timer[1] == idx:
+                text = f"{max(0.0, timer[0]):.1f}s"
+            else:
+                text = ""
+            child.setText(self.COL_NEXT, text)
+            font = child.font(self.COL_SOUND)
+            if font.bold() != (idx in playing):
+                font.setBold(idx in playing)
+                child.setFont(self.COL_SOUND, font)
+
+    def _fill_waves(self, it: QTreeWidgetItem, rule: KVNode) -> None:
+        """Show each rndwave entry of a playrandom rule as a child row."""
+        rnd = rule.find("rndwave")
+        waves = [c.value or "" for c in rnd.find_all("wave")] if rnd is not None and rnd.is_block else []
+        if [it.child(i).data(0, Qt.UserRole + 2) for i in range(it.childCount())] == waves:
             return
-        self.active_uids = uids
+        current = self.rules.currentItem()
+        current_row = it.indexOfChild(current) if current is not None and current.parent() is it else None
+        self.rules.blockSignals(True)
+        try:
+            it.takeChildren()
+            grey = QBrush(self.palette().placeholderText().color())
+            for idx, wave in enumerate(waves):
+                name = wave.replace("\\", "/").rsplit("/", 1)[-1]
+                child = QTreeWidgetItem(["wave", name])
+                child.setData(0, Qt.UserRole, rule)
+                child.setData(0, Qt.UserRole + 1, idx)
+                child.setData(0, Qt.UserRole + 2, wave)
+                child.setForeground(self.COL_TYPE, grey)
+                child.setToolTip(self.COL_SOUND, f"{wave}\nDouble-click to preview")
+                child.setFlags(child.flags() & ~Qt.ItemIsUserCheckable)
+                it.addChild(child)
+            if current_row is not None:
+                self.rules.setCurrentItem(it.child(min(current_row, it.childCount() - 1)) if waves else it)
+        finally:
+            self.rules.blockSignals(False)
+
+    def set_active(
+        self,
+        uids: set[int],
+        waves: dict[int, set[int]] | None = None,
+        timers: dict[int, tuple[float, int]] | None = None,
+    ) -> None:
+        """Highlight audible rules and rndwave entries; update next-play timers."""
+        waves = waves or {}
+        timers = timers or {}
+        refill = uids != self.active_uids
+        self.active_uids, self.active_waves, self.timers = uids, waves, timers
         self._loading = True
         for i in range(self.rules.topLevelItemCount()):
             it = self.rules.topLevelItem(i)
-            self._fill_item(it, it.data(0, Qt.UserRole))
+            rule = it.data(0, Qt.UserRole)
+            if refill:
+                self._fill_item(it, rule)
+            else:
+                self._update_live(it, rule)
         self._loading = False
 
     # ------------------------------------------------------------------
@@ -506,8 +585,21 @@ class SoundscapeEditor(QWidget):
         if form is None:
             self.stack.setCurrentWidget(self.empty)
             return
-        form.set_rule(rule)
+        if form.rule is not rule or item.parent() is None:
+            form.set_rule(rule)
         self.stack.setCurrentWidget(form)
+        if form is self.random_form:
+            wave_idx = item.data(0, Qt.UserRole + 1)
+            self.random_form.waves.setCurrentRow(wave_idx if wave_idx is not None else -1)
+
+    def _item_double_clicked(self, item, _column):
+        rule = item.data(0, Qt.UserRole)
+        if item.parent() is not None:
+            self.previewWave.emit(item.data(0, Qt.UserRole + 2))
+        elif rule is not None and rule.key.lower() == RULE_LOOPING and rule.get("wave"):
+            self.previewWave.emit(rule.get("wave"))
+        else:
+            item.setExpanded(not item.isExpanded())
 
     def select_rule(self, uid: int) -> None:
         for i in range(self.rules.topLevelItemCount()):
@@ -517,7 +609,7 @@ class SoundscapeEditor(QWidget):
                 return
 
     def _rule_changed(self):
-        it = self.rules.currentItem()
+        it = self._rule_item(self.rules.currentItem())
         if it:
             self._loading = True
             self._fill_item(it, it.data(0, Qt.UserRole))
@@ -525,7 +617,7 @@ class SoundscapeEditor(QWidget):
         self.changed.emit()
 
     def _item_changed(self, item, column):
-        if self._loading:
+        if self._loading or item.parent() is not None:
             return
         rule = item.data(0, Qt.UserRole)
         if column == self.COL_MUTE:

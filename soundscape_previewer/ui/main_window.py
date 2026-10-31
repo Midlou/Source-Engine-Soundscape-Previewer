@@ -961,18 +961,34 @@ class MainWindow(QMainWindow):
         self.meter.setValue(int(min(1.0, snap["peak"]) * 100))
         scape = self.editor.scape
         active: set[int] = set()
+        waves: dict[int, set[int]] = {}
+        timers: dict[int, tuple[float, int]] = {}
         if scape is not None and self._playing_node() is scape:
             children = scape.children
-            keys = [lp["key"] for lp in snap["loops"] if lp["playing"] and lp["level"] > 0.001]
-            keys += [s["key"] for s in snap["oneshots"]]
-            for k in keys:
+
+            def rule_uid(key: str) -> int | None:
                 try:
-                    i = int(k.split(">")[0])
+                    i = int(key.split(">")[0])
                 except ValueError:
+                    return None
+                return children[i].uid if 0 <= i < len(children) else None
+
+            for lp in snap["loops"]:
+                uid = rule_uid(lp["key"])
+                if uid is not None and lp["playing"] and lp["level"] > 0.001:
+                    active.add(uid)
+            for shot in snap["oneshots"]:
+                uid = rule_uid(shot["key"])
+                if uid is None:
                     continue
-                if 0 <= i < len(children):
-                    active.add(children[i].uid)
-        self.editor.set_active(active)
+                active.add(uid)
+                if ">" not in shot["key"]:  # rndwave rows exist only for the rule's own entries
+                    waves.setdefault(uid, set()).add(shot["entry"])
+            for key, (remaining, entry) in snap["randoms"].items():
+                uid = rule_uid(key)
+                if uid is not None and ">" not in key:
+                    timers[uid] = (remaining, entry)
+        self.editor.set_active(active, waves, timers)
         if self.engine.error and not getattr(self, "_shown_engine_error", False):
             self._shown_engine_error = True
             self.statusBar().showMessage(self.engine.error, 10000)

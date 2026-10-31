@@ -315,6 +315,7 @@ class _LoopState:
 class _RandomState:
     spec: RandomSpec
     next_time: float
+    next_entry: int = 0  # rndwave entry picked for the next play
 
 
 @dataclass
@@ -326,6 +327,7 @@ class _OneShot:
     volume: float
     key: str
     wave: str
+    entry: int
 
 
 @dataclass
@@ -418,11 +420,14 @@ class Engine:
                 if st is None:
                     lo, hi = spec.time
                     st = _RandomState(spec, self.now + 0.5 * self._rng.uniform(lo, hi))
+                    st.next_entry = self._pick_entry(spec)
                 else:
                     # Shorten the wait if the new max time is lower than what's left.
                     if st.next_time - self.now > spec.time[1]:
                         st.next_time = self.now + self._rng.uniform(*spec.time)
                     st.spec = spec
+                    if not any(w.entry == st.next_entry for w in spec.waves):
+                        st.next_entry = self._pick_entry(spec)
                 new_randoms[spec.key] = st
             self._randoms = new_randoms
             self.plan = plan
@@ -493,11 +498,18 @@ class Engine:
                     }
                 )
             shots = [
-                {"key": s.key, "wave": s.wave, "point": s.point, "level": s.voice.level, "attenuation": s.attenuation}
+                {
+                    "key": s.key,
+                    "wave": s.wave,
+                    "entry": s.entry,
+                    "point": s.point,
+                    "level": s.voice.level,
+                    "attenuation": s.attenuation,
+                }
                 for s in self._oneshots
                 if not s.voice.done
             ]
-            randoms = {k: st.next_time - self.now for k, st in self._randoms.items()}
+            randoms = {k: (st.next_time - self.now, st.next_entry) for k, st in self._randoms.items()}
             return {
                 "loops": loops,
                 "oneshots": shots,
@@ -516,9 +528,14 @@ class Engine:
             mix = np.zeros((frames, 2), np.float32)
         outdata[:] = mix
 
+    def _pick_entry(self, spec: RandomSpec) -> int:
+        """Pick a rndwave entry; each entry is equally likely, like the engine."""
+        return self._rng.choice(sorted({w.entry for w in spec.waves}))
+
     def _start_oneshot(self, st: _RandomState) -> None:
         spec = st.spec
-        choice = self._rng.choice(spec.waves)
+        choices = [w for w in spec.waves if w.entry == st.next_entry] or spec.waves
+        choice = self._rng.choice(choices)
         data = self.bank.get(choice.path)
         if data is None or data is SoundBank.MISSING:
             return
@@ -539,7 +556,7 @@ class Engine:
         v.fade = 1.0
         g = sp.gains(point, spec.attenuation, vol)
         v.gain = v.target = g
-        self._oneshots.append(_OneShot(v, point, spec.position, spec.attenuation, vol, spec.key, choice.path))
+        self._oneshots.append(_OneShot(v, point, spec.position, spec.attenuation, vol, spec.key, choice.path, choice.entry))
         self.events.append(Event(self.now, spec.key, choice.path, point))
 
     def _mix(self, n: int) -> np.ndarray:
@@ -551,6 +568,7 @@ class Engine:
                 if now >= st.next_time:
                     self._start_oneshot(st)
                     st.next_time = now + max(0.05, self._rng.uniform(*st.spec.time))
+                    st.next_entry = self._pick_entry(st.spec)
 
             for st in self._loops.values():
                 if st.voice is None:
