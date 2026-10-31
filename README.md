@@ -54,18 +54,31 @@ it in seconds.
   - duplicate loops (only one instance plays in-game)
   - positioned random sounds without attenuation
 
-## Requirements
+## Download
 
-- Windows (Linux/macOS should work but are untested)
-- Python 3.10+
-- A Source game installed (for its VPK files)
+Get the latest Windows build from the
+[Releases page](https://github.com/Midlou/Source-Engine-Soundscape-Previewer/releases/latest):
 
-## Installation
+1. Download `SoundscapePreviewer-<version>-windows.zip`.
+2. Extract it anywhere.
+3. Run `SoundscapePreviewer.exe`. No Python needed.
+
+Settings and profiles are stored in `%APPDATA%\SoundscapePreviewer`.
+
+Windows SmartScreen may warn about an unrecognized app because the build is
+not code-signed. Click *More info → Run anyway*.
+
+You need a Source game installed, because sounds are read from its VPK files.
+
+## Running from source
+
+Requires Python 3.10+.
 
 ```bat
 git clone https://github.com/Midlou/Source-Engine-Soundscape-Previewer.git
 cd Source-Engine-Soundscape-Previewer
 setup.bat
+run.bat
 ```
 
 `setup.bat` creates a virtual environment in `.venv` and installs the
@@ -76,19 +89,34 @@ Manual setup:
 ```bat
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
-```
-
-## Running
-
-```bat
-run.bat
-```
-
-or
-
-```bat
 .venv\Scripts\python main.py
 ```
+
+When run from source, settings are stored in `data/settings.json`.
+
+## Building the .exe
+
+```bat
+build.bat
+```
+
+This installs PyInstaller, builds `dist\SoundscapePreviewer\SoundscapePreviewer.exe`
+from `SoundscapePreviewer.spec`, and runs the build's self test
+(`SoundscapePreviewer.exe --self-test`).
+
+### Automatic builds and releases
+
+[`.github/workflows/build.yml`](.github/workflows/build.yml) runs on every push
+to `main`:
+
+1. Builds the .exe on Windows and runs its self test.
+2. Uploads the zip as a build artifact. You can find it on the workflow run's
+   page in the *Actions* tab.
+3. If `__version__` in `soundscape_previewer/__init__.py` has no release yet,
+   it publishes a GitHub Release `v<version>` with the zip attached.
+
+To publish a new version, bump `__version__` (e.g. to `"1.1"`) and push to
+`main`.
 
 ## Usage
 
@@ -148,11 +176,14 @@ soundscape_previewer/
   gamedata.py                   profile content index (sounds, soundscripts, soundscapes)
   audio.py                      decoding, cue points, real-time mixer
   settings.py                   settings, profiles, Steam detection
+  selftest.py                   checks used to verify packaged builds
   ui/                           PySide6 interface
+SoundscapePreviewer.spec        PyInstaller build definition
+.github/workflows/build.yml     CI build and releases
 ```
 
-Settings and profiles are saved in `data/settings.json`. This file is not
-committed.
+Settings are saved in `data/settings.json` when run from source (not
+committed), or in `%APPDATA%\SoundscapePreviewer` for the .exe.
 
 ## Credits
 

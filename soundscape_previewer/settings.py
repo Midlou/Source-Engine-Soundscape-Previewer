@@ -1,13 +1,25 @@
-"""Persistent settings and game profiles (stored in data/settings.json)."""
+"""Persistent settings and game profiles (stored in settings.json)."""
 from __future__ import annotations
 
 import json
 import os
 import re
+import sys
 from dataclasses import asdict, dataclass, field
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_DIR = os.path.join(ROOT, "data")
+
+
+def _data_dir() -> str:
+    """data/ next to the sources, or %APPDATA%/SoundscapePreviewer for the .exe build."""
+    if os.environ.get("SSP_DATA_DIR"):
+        return os.environ["SSP_DATA_DIR"]
+    if getattr(sys, "frozen", False):
+        return os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "SoundscapePreviewer")
+    return os.path.join(ROOT, "data")
+
+
+DATA_DIR = _data_dir()
 SETTINGS_PATH = os.path.join(DATA_DIR, "settings.json")
 
 
@@ -67,7 +79,7 @@ class Settings:
         return s
 
     def save(self) -> None:
-        os.makedirs(DATA_DIR, exist_ok=True)
+        os.makedirs(os.path.dirname(SETTINGS_PATH), exist_ok=True)
         tmp = SETTINGS_PATH + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(asdict(self), f, indent=2)

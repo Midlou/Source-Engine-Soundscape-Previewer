@@ -1,0 +1,80 @@
+# Builds the Windows .exe on every push to main.
+# When soundscape_previewer/__init__.py has a version that has no release yet,
+# a GitHub Release "v<version>" is published with the zip attached.
+name: Build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-build.txt
+
+      - name: Read version
+        id: version
+        shell: bash
+        run: |
+          version=$(python -c "import soundscape_previewer as s; print(s.__version__)")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "zip=SoundscapePreviewer-$version-windows.zip" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: python -m PyInstaller --noconfirm SoundscapePreviewer.spec
+
+      - name: Self test the build
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\SoundscapePreviewer\SoundscapePreviewer.exe `
+               -ArgumentList '--self-test', 'selftest.log' -Wait -PassThru
+          Get-Content selftest.log
+          if ($p.ExitCode -ne 0) { throw "Self test failed with exit code $($p.ExitCode)" }
+
+      - name: Zip
+        shell: pwsh
+        run: Compress-Archive -Path dist\SoundscapePreviewer -DestinationPath "${{ steps.version.outputs.zip }}"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SoundscapePreviewer-${{ steps.version.outputs.version }}-${{ github.sha }}
+          path: ${{ steps.version.outputs.zip }}
+          retention-days: 30
+
+      - name: Publish release for a new version
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          ZIP: ${{ steps.version.outputs.zip }}
+        run: |
+          if gh release view "v$VERSION" > /dev/null 2>&1; then
+            echo "Release v$VERSION already exists; bump __version__ to publish a new one."
+            exit 0
+          fi
+          gh release create "v$VERSION" "$ZIP" \
+            --target "$GITHUB_SHA" \
+            --title "Soundscape Previewer $VERSION" \
+            --generate-notes \
+            --notes "Download **$ZIP**, extract it anywhere and run **SoundscapePreviewer.exe**. Settings are stored in %APPDATA%\\SoundscapePreviewer."
