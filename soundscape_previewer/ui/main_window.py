@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .. import __version__
 from .. import keyvalues as kv
 from ..audio import DEFAULT_SOUNDSCAPE_FADE, LIVE_EDIT_FADE, Engine, SoundBank, read_wav_loop_points
 from ..gamedata import GameContent
@@ -53,6 +54,7 @@ from .profiles_dialog import ProfilesDialog
 from .script_editor import ScriptEditor
 
 WIKI_URL = "https://developer.valvesoftware.com/wiki/Soundscape"
+REPO_URL = "https://github.com/Midlou/Source-Engine-Soundscape-Previewer"
 
 NEW_FILE_TEMPLATE = """// Soundscapes for my map.
 // Save as tf/scripts/soundscapes_<mapname>.txt (or pack it into the BSP).
@@ -319,7 +321,7 @@ class MainWindow(QMainWindow):
         act(m, "Reset positions view", self.positions.reset_view)
         m = mb.addMenu("&Help")
         act(m, "Soundscape documentation (wiki)", lambda: QDesktopServices.openUrl(QUrl(WIKI_URL)))
-        act(m, "About", self._about)
+        act(m, "About Soundscape Previewer", self._about)
 
     # =========================================================== profiles
     def _fill_profile_combo(self) -> None:
@@ -1051,15 +1053,38 @@ class MainWindow(QMainWindow):
         self.settings.save()
 
     def _about(self) -> None:
-        QMessageBox.about(
-            self,
-            "Soundscape Previewer",
-            "<b>Soundscape Previewer</b><br>Preview Source engine soundscapes outside the game, with live editing.<br><br>"
-            "Simulated: playlooping, playrandom, playsoundscape (volume, position offsets/overrides), "
-            "positions 0-7, position random, origin, attenuation/soundlevel falloff, cue-point looping, "
-            "fadetime crossfades.<br>Not simulated: DSP presets and soundmixers.<br><br>"
-            f"<a href='{WIKI_URL}'>{WIKI_URL}</a>",
+        box = QMessageBox(self)
+        box.setWindowTitle("About Soundscape Previewer")
+        box.setTextFormat(Qt.RichText)
+        box.setText(
+            f"<h3>Soundscape Previewer {__version__}</h3>"
+            "Preview Source engine soundscapes outside the game, with live editing."
         )
+        box.setInformativeText(
+            "<p><b>Created by</b> Midlou<br>"
+            f"<a href='{REPO_URL}'>{REPO_URL}</a></p>"
+            "<p><b>AI assistance</b><br>"
+            "Developed with the help of <a href='https://www.anthropic.com/claude'>Claude</a> (Anthropic), "
+            "an AI assistant that wrote much of the code under Midlou's direction and review.</p>"
+            "<p><b>Built with</b><br>"
+            "<a href='https://doc.qt.io/qtforpython-6/'>Qt for Python (PySide6)</a> - LGPL v3<br>"
+            "<a href='https://numpy.org/'>NumPy</a> - BSD<br>"
+            "<a href='https://python-sounddevice.readthedocs.io/'>python-sounddevice</a> / PortAudio - MIT<br>"
+            "<a href='https://python-soundfile.readthedocs.io/'>python-soundfile</a> / "
+            "<a href='https://libsndfile.github.io/libsndfile/'>libsndfile</a> - BSD / LGPL</p>"
+            "<p><b>References</b><br>"
+            f"<a href='{WIKI_URL}'>Valve Developer Community: Soundscape</a></p>"
+            "<p><small>Simulated: playlooping, playrandom, playsoundscape, positions 0-7, position random, "
+            "origin, attenuation/soundlevel falloff, cue-point looping and fadetime crossfades. "
+            "Not simulated: DSP presets and soundmixers.</small></p>"
+            "<p><small>Released under the MIT License. Not affiliated with or endorsed by Valve Corporation. "
+            "Source, Team Fortress 2 and Valve are trademarks of Valve Corporation. "
+            "Game sounds are read from your own installation and are not included.</small></p>"
+        )
+        box.setIcon(QMessageBox.Information)
+        for label in box.findChildren(QLabel):
+            label.setOpenExternalLinks(True)
+        box.exec()
 
     def closeEvent(self, e) -> None:
         for f in list(self.files):

@@ -154,6 +154,15 @@ soundscape_previewer/
 Settings and profiles are saved in `data/settings.json`. This file is not
 committed.
 
+## Credits
+
+Created by [Midlou](https://github.com/Midlou).
+
+Developed with the help of [Claude](https://www.anthropic.com/claude)
+(Anthropic), an AI assistant that wrote much of the code under Midlou's
+direction and review. Commits it contributed to are marked with a
+`Co-Authored-By: Claude` trailer.
+
 ## License
 
 [MIT](LICENSE) © 2026 Midlou
