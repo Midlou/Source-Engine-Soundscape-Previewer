@@ -32,11 +32,22 @@ from ..soundscape import (
     describe_rule,
     new_rule,
     parse_float,
+    parse_range,
 )
-from .widgets import FalloffEdit, PositionCombo, RangeEdit, WaveLineEdit, WaveListWidget, fmt, spin
+from .widgets import FalloffEdit, PositionCombo, RangeEdit, RuleTreeWidget, WaveLineEdit, WaveListWidget, fmt, fmt_range, spin
 
 RULE_LABELS = {RULE_LOOPING: "Looping", RULE_RANDOM: "Random", RULE_SUBSCAPE: "Sub-soundscape"}
 RULE_COLORS = {RULE_LOOPING: "#3b82f6", RULE_RANDOM: "#f59e0b", RULE_SUBSCAPE: "#a855f7"}
+
+
+def _volume_pitch_text(rule: KVNode) -> tuple[str, str]:
+    """Volume and pitch as the engine plays them (defaults filled in)."""
+    k = rule.key.lower()
+    if k == RULE_LOOPING:
+        return fmt(parse_float(rule.get("volume"), 0.0)), fmt(parse_float(rule.get("pitch"), 100.0))
+    if k == RULE_RANDOM:
+        return fmt_range(*parse_range(rule.get("volume"), (1.0, 1.0))), fmt_range(*parse_range(rule.get("pitch"), (100.0, 100.0)))
+    return fmt(parse_float(rule.get("volume"), 1.0)), ""
 
 
 def _position_text(rule: KVNode) -> str:
@@ -312,7 +323,7 @@ class SoundscapeEditor(QWidget):
     mutesChanged = Signal()
     ruleSelected = Signal(object)
 
-    COL_TYPE, COL_SOUND, COL_POS, COL_NEXT, COL_MUTE, COL_SOLO = range(6)
+    COL_TYPE, COL_SOUND, COL_VOL, COL_PITCH, COL_POS, COL_NEXT, COL_MUTE, COL_SOLO = range(8)
 
     def __init__(self, selected_sound: Callable[[], str | None], soundscape_names: Callable[[], list[str]]):
         super().__init__()
@@ -361,18 +372,20 @@ class SoundscapeEditor(QWidget):
         for b in (self.btn_loop, self.btn_random, self.btn_sub):
             bar.addWidget(b)
         ll.addLayout(bar)
-        self.rules = QTreeWidget()
-        self.rules.setHeaderLabels(["Rule", "Sound / soundscape", "Pos", "Next", "M", "S"])
+        self.rules = RuleTreeWidget()
+        self.rules.setHeaderLabels(["Rule", "Sound / soundscape", "Vol", "Pitch", "Pos", "Next", "M", "S"])
         self.rules.setRootIsDecorated(True)
         self.rules.setExpandsOnDoubleClick(False)
         self.rules.setTextElideMode(Qt.ElideMiddle)  # keep file names visible in long paths
         self.rules.setUniformRowHeights(True)
         h = self.rules.header()
         h.setSectionResizeMode(self.COL_SOUND, QHeaderView.Stretch)
-        for c in (self.COL_TYPE, self.COL_POS, self.COL_MUTE, self.COL_SOLO):
+        for c in (self.COL_TYPE, self.COL_VOL, self.COL_PITCH, self.COL_POS, self.COL_MUTE, self.COL_SOLO):
             h.setSectionResizeMode(c, QHeaderView.ResizeToContents)
         h.setSectionResizeMode(self.COL_NEXT, QHeaderView.Fixed)
         self.rules.setColumnWidth(self.COL_NEXT, self.fontMetrics().horizontalAdvance("▶ playing") + 12)
+        self.rules.headerItem().setToolTip(self.COL_VOL, "Volume (0-1); a range for random rules")
+        self.rules.headerItem().setToolTip(self.COL_PITCH, "Pitch (100 = normal); a range for random rules")
         self.rules.headerItem().setToolTip(self.COL_NEXT, "Time until a random rule plays again, and which sound it picked")
         self.rules.headerItem().setToolTip(self.COL_MUTE, "Mute (preview only, not saved)")
         self.rules.headerItem().setToolTip(self.COL_SOLO, "Solo (preview only, not saved)")
@@ -388,7 +401,7 @@ class SoundscapeEditor(QWidget):
         split.addWidget(left)
 
         self.stack = QStackedWidget()
-        self.empty = QLabel("Select a rule to edit it.\n\nLooping: a sound that plays constantly.\nRandom: sounds played at random intervals.\nSub-soundscape: plays another soundscape inside this one.")
+        self.empty = QLabel("Select a rule to edit it.\n\nLooping: a sound that plays constantly.\nRandom: sounds played at random intervals.\nSub-soundscape: plays another soundscape inside this one.\n\nDrop sounds from the sound browser on the rule list to add them as looping rules.")
         self.empty.setAlignment(Qt.AlignCenter)
         self.empty.setWordWrap(True)
         self.loop_form = LoopForm(selected_sound)
@@ -397,7 +410,7 @@ class SoundscapeEditor(QWidget):
         for w in (self.empty, self.loop_form, self.random_form, self.sub_form):
             self.stack.addWidget(w)
         split.addWidget(self.stack)
-        split.setSizes([500, 440])
+        split.setSizes([600, 400])
         outer.addWidget(split, 1)
 
         for f in (self.loop_form, self.random_form, self.sub_form):
@@ -415,6 +428,7 @@ class SoundscapeEditor(QWidget):
         self.rules.currentItemChanged.connect(self._select)
         self.rules.itemChanged.connect(self._item_changed)
         self.rules.itemDoubleClicked.connect(self._item_double_clicked)
+        self.rules.dropped.connect(self._sounds_dropped)
         self.rules.itemExpanded.connect(lambda it: self.expanded_uids.add(it.data(0, Qt.UserRole).uid))
         self.rules.itemCollapsed.connect(lambda it: self.expanded_uids.discard(it.data(0, Qt.UserRole).uid))
 
@@ -495,6 +509,9 @@ class SoundscapeEditor(QWidget):
         it.setText(self.COL_TYPE, RULE_LABELS.get(k, rule.key))
         it.setText(self.COL_SOUND, describe_rule(rule))
         it.setToolTip(self.COL_SOUND, "\n".join(c.value or "" for c in rule.children or () if c.key.lower() in ("wave", "name")) or "")
+        vol, pitch = _volume_pitch_text(rule)
+        it.setText(self.COL_VOL, vol)
+        it.setText(self.COL_PITCH, pitch)
         it.setText(self.COL_POS, _position_text(rule) if k != RULE_SUBSCAPE else "")
         active = rule.uid in self.active_uids
         font = it.font(self.COL_SOUND)
@@ -514,7 +531,7 @@ class SoundscapeEditor(QWidget):
         silenced = self._is_silenced(rule)
         normal = QBrush()  # default text color of the current theme
         it.setForeground(self.COL_TYPE, grey if silenced else QBrush(QColor(RULE_COLORS.get(rule.key.lower(), "#888"))))
-        for col in (self.COL_SOUND, self.COL_POS, self.COL_NEXT):
+        for col in (self.COL_SOUND, self.COL_VOL, self.COL_PITCH, self.COL_POS, self.COL_NEXT):
             it.setForeground(col, grey if silenced else normal)
         for i in range(it.childCount()):
             child = it.child(i)
@@ -682,6 +699,17 @@ class SoundscapeEditor(QWidget):
         self.refresh_rules(len(self.rule_nodes()) - 1)
         self.changed.emit()
         return rule
+
+    def _sounds_dropped(self, sounds: list[str]) -> None:
+        """Each sound dropped on the rule list becomes a new looping rule."""
+        if self.scape is None:
+            return
+        for sound in sounds:
+            rule = new_rule(RULE_LOOPING)
+            rule.set("wave", sound)
+            self.scape.children.append(rule)
+        self.refresh_rules(len(self.rule_nodes()) - 1)
+        self.changed.emit()
 
     def _duplicate(self):
         rule = self.current_rule()

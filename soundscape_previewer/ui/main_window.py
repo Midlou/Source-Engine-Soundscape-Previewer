@@ -5,12 +5,13 @@ import os
 import threading
 
 from PySide6.QtCore import QByteArray, QFileSystemWatcher, QObject, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QKeySequence
+from PySide6.QtGui import QAction, QDesktopServices, QKeySequence
 from PySide6.QtCore import QLocale, QUrl
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QDialog,
     QDockWidget,
     QFileDialog,
     QHeaderView,
@@ -30,7 +31,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import __version__
 from .. import keyvalues as kv
 from ..audio import DEFAULT_SOUNDSCAPE_FADE, LIVE_EDIT_FADE, Engine, SoundBank, read_wav_loop_points
 from ..gamedata import GameContent
@@ -47,15 +47,15 @@ from ..soundscape import (
     normalize_wave,
     validate,
 )
+from .about import WIKI_URL, about_body, about_title
 from .browser import SoundBrowser
 from .editor import SoundscapeEditor
 from .positions import PositionsView
+from .preferences_dialog import PreferencesDialog
 from .profiles_dialog import ProfilesDialog
 from .script_editor import ScriptEditor
 from .theme import THEMES, apply_theme
 
-WIKI_URL = "https://developer.valvesoftware.com/wiki/Soundscape"
-REPO_URL = "https://github.com/Midlou/Source-Engine-Soundscape-Previewer"
 
 NEW_FILE_TEMPLATE = """// Soundscapes for my map.
 // Save as tf/scripts/soundscapes_<mapname>.txt (or pack it into the BSP).
@@ -142,6 +142,9 @@ class MainWindow(QMainWindow):
         self._ui_timer = QTimer(self, interval=33)
         self._ui_timer.timeout.connect(self._tick)
         self._ui_timer.start()
+        self._auto_save_timer = QTimer(self)
+        self._auto_save_timer.timeout.connect(self._auto_save)
+        self._update_auto_save_timer()
 
         if self.settings.geometry:
             self.restoreGeometry(QByteArray.fromBase64(self.settings.geometry.encode()))
@@ -309,6 +312,8 @@ class MainWindow(QMainWindow):
         act(m, "Save all", self._save_all, "Ctrl+Shift+S")
         act(m, "Close file", self._close_current_file, "Ctrl+W")
         m.addSeparator()
+        act(m, "Preferences…", self._preferences, "Ctrl+,")
+        m.addSeparator()
         act(m, "Exit", self.close)
         m = mb.addMenu("&Soundscape")
         act(m, "New soundscape", self._new_soundscape, "Ctrl+Shift+N")
@@ -325,16 +330,6 @@ class MainWindow(QMainWindow):
         for d in (self.dock_files, self.dock_browser, self.dock_positions):
             m.addAction(d.toggleViewAction())
         act(m, "Reset positions view", self.positions.reset_view)
-        m.addSeparator()
-        theme_menu = m.addMenu("Theme")
-        group = QActionGroup(self)
-        group.setExclusive(True)
-        for key, label in THEMES.items():
-            a = QAction("System (follow Windows)" if key == "system" else label, self, checkable=True)
-            a.setChecked(key == self.settings.theme)
-            a.triggered.connect(lambda _checked=False, k=key: self._set_theme(k))
-            group.addAction(a)
-            theme_menu.addAction(a)
         m = mb.addMenu("&Help")
         act(m, "Soundscape documentation (wiki)", lambda: QDesktopServices.openUrl(QUrl(WIKI_URL)))
         act(m, "About Soundscape Previewer", self._about)
@@ -612,6 +607,33 @@ class MainWindow(QMainWindow):
         for f in self.files:
             if f.dirty:
                 self._save_file(f)
+
+    # =========================================================== auto save
+    def _update_auto_save_timer(self) -> None:
+        self.settings.auto_save_minutes = max(1, int(self.settings.auto_save_minutes))
+        if self.settings.auto_save:
+            self._auto_save_timer.start(self.settings.auto_save_minutes * 60_000)
+        else:
+            self._auto_save_timer.stop()
+
+    def _auto_save(self) -> None:
+        """Save modified files that already have a path. Never opens a dialog."""
+        saved, failed = [], []
+        for f in self.files:
+            if not f.dirty or not f.path:
+                continue  # new files need "Save as" first
+            try:
+                f.save()
+                saved.append(f)
+            except OSError:
+                failed.append(f)
+        if saved:
+            self._remember_files()
+            self._update_file_labels()
+        if failed:
+            self.statusBar().showMessage("Auto save failed for " + ", ".join(f.display_name for f in failed), 8000)
+        elif saved:
+            self.statusBar().showMessage(f"Auto saved {len(saved)} file{'s' if len(saved) != 1 else ''}", 4000)
 
     def _confirm_discard(self, f: SoundscapeFile) -> bool:
         if not f.dirty:
@@ -954,9 +976,13 @@ class MainWindow(QMainWindow):
         self.engine.preview(path, loop)
         self.statusBar().showMessage(f"Previewing {path}", 3000)
 
-    def _set_theme(self, theme: str) -> None:
-        self.settings.theme = theme
-        apply_theme(theme)
+    def _preferences(self) -> None:
+        dlg = PreferencesDialog(self.settings, self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        dlg.apply_to(self.settings)
+        apply_theme(self.settings.theme)
+        self._update_auto_save_timer()
         self._save_settings_soon()
 
     def _follow_toggled(self, on: bool) -> None:
@@ -1081,31 +1107,8 @@ class MainWindow(QMainWindow):
         box = QMessageBox(self)
         box.setWindowTitle("About Soundscape Previewer")
         box.setTextFormat(Qt.RichText)
-        box.setText(
-            f"<h3>Soundscape Previewer {__version__}</h3>"
-            "Preview Source engine soundscapes outside the game, with live editing."
-        )
-        box.setInformativeText(
-            "<p><b>Created by</b> Midlou<br>"
-            f"<a href='{REPO_URL}'>{REPO_URL}</a></p>"
-            "<p><b>AI assistance</b><br>"
-            "Developed with the help of <a href='https://www.anthropic.com/claude'>Claude</a> (Anthropic), "
-            "an AI assistant that wrote much of the code under Midlou's direction and review.</p>"
-            "<p><b>Built with</b><br>"
-            "<a href='https://doc.qt.io/qtforpython-6/'>Qt for Python (PySide6)</a> - LGPL v3<br>"
-            "<a href='https://numpy.org/'>NumPy</a> - BSD<br>"
-            "<a href='https://python-sounddevice.readthedocs.io/'>python-sounddevice</a> / PortAudio - MIT<br>"
-            "<a href='https://python-soundfile.readthedocs.io/'>python-soundfile</a> / "
-            "<a href='https://libsndfile.github.io/libsndfile/'>libsndfile</a> - BSD / LGPL</p>"
-            "<p><b>References</b><br>"
-            f"<a href='{WIKI_URL}'>Valve Developer Community: Soundscape</a></p>"
-            "<p><small>Simulated: playlooping, playrandom, playsoundscape, positions 0-7, position random, "
-            "origin, attenuation/soundlevel falloff, cue-point looping and fadetime crossfades. "
-            "Not simulated: DSP presets and soundmixers.</small></p>"
-            "<p><small>Released under the MIT License. Not affiliated with or endorsed by Valve Corporation. "
-            "Source, Team Fortress 2 and Valve are trademarks of Valve Corporation. "
-            "Game sounds are read from your own installation and are not included.</small></p>"
-        )
+        box.setText(about_title())
+        box.setInformativeText(about_body())
         box.setIcon(QMessageBox.Information)
         for label in box.findChildren(QLabel):
             label.setOpenExternalLinks(True)

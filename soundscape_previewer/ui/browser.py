@@ -78,6 +78,10 @@ class SoundBrowser(QWidget):
         self.btn_collapse.setText("Collapse all")
         self.btn_collapse.setToolTip("Close all open folders")
         row.addWidget(self.btn_collapse)
+        self.btn_expand = QToolButton()
+        self.btn_expand.setText("Open all")
+        self.btn_expand.setToolTip("Open every folder")
+        row.addWidget(self.btn_expand)
         fl.addLayout(row)
         self.stack = QStackedWidget()
         self.tree = _DragTree()
@@ -163,6 +167,7 @@ class SoundBrowser(QWidget):
         self.ss_search.textChanged.connect(self._fill_soundscapes)
         self.tree.itemExpanded.connect(self._expand)
         self.btn_collapse.clicked.connect(self._collapse_all)
+        self.btn_expand.clicked.connect(self._expand_all)
         self.tree.itemDoubleClicked.connect(lambda it, _c: self._play(False) if it.data(0, Qt.UserRole) and not self._clicked() else None)
         self.results.itemDoubleClicked.connect(lambda _it: self._clicked() or self._play(False))
         self.tree.itemClicked.connect(lambda it, _c: self._clicked() and it.data(0, Qt.UserRole) and self._play(False))
@@ -233,6 +238,20 @@ class SoundBrowser(QWidget):
         self.search.clear()  # show the folder tree if a search was active
         self.tree.collapseAll()
         self.tree.scrollToTop()
+
+    def _expand_all(self) -> None:
+        self.search.clear()
+        self.tree.setUpdatesEnabled(False)
+        try:
+            # folders are filled lazily, so fill them all before expanding
+            stack = [self.tree.topLevelItem(i) for i in range(self.tree.topLevelItemCount())]
+            while stack:
+                item = stack.pop()
+                self._expand(item)
+                stack.extend(item.child(i) for i in range(item.childCount()) if item.child(i).data(0, Qt.UserRole + 1) is not None)
+            self.tree.expandAll()
+        finally:
+            self.tree.setUpdatesEnabled(True)
 
     def _run_search(self) -> None:
         terms = self.search.text().lower().split()

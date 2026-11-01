@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QTreeWidget,
     QWidget,
 )
 
@@ -194,6 +195,32 @@ class WaveLineEdit(QLineEdit):
             self.setText(text[0])
             self.editingFinished.emit()
         e.acceptProposedAction()
+
+
+class RuleTreeWidget(QTreeWidget):
+    """Rule list; sounds dropped on it become new rules."""
+
+    dropped = Signal(list)
+
+    def __init__(self):
+        super().__init__()
+        self.setAcceptDrops(True)
+        self.setDragDropMode(QTreeWidget.DropOnly)
+
+    def dragEnterEvent(self, e):
+        if e.mimeData().hasText():
+            e.acceptProposedAction()
+
+    def dragMoveEvent(self, e):
+        if e.mimeData().hasText():
+            e.acceptProposedAction()
+
+    def dropEvent(self, e):
+        lines = [t.strip() for t in e.mimeData().text().splitlines() if t.strip()]
+        if lines:
+            self.dropped.emit(lines)
+        e.setDropAction(Qt.CopyAction)
+        e.accept()
 
 
 class WaveListWidget(QListWidget):

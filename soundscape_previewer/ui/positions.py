@@ -6,9 +6,9 @@ import time
 
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QMenu, QToolButton, QWidget
 
-from ..audio import Engine
+from ..audio import Engine, Spatial
 from ..soundscape import NUM_POSITIONS
 
 POS_COLORS = ["#ef4444", "#f97316", "#eab308", "#22c55e", "#06b6d4", "#3b82f6", "#8b5cf6", "#ec4899"]
@@ -40,6 +40,21 @@ class PositionsView(QWidget):
             "Drag the listener and positions 0-7.\nRight-drag: turn the listener. Middle-drag: pan. Wheel: zoom.\n"
             "Double-click a position: enable/disable it (like an unset env_soundscape target)."
         )
+
+        # floating button in the top-right corner; add more actions to self.menu
+        self.menu = QMenu(self)
+        self.menu.addAction("Reset positions", self.reset_positions)
+        self.menu.addAction("Reset player position", self.reset_listener)
+        self.menu.addAction("Reset view", self.reset_view)
+        self.menu.addSeparator()
+        self.menu.addAction("Reset all", self.reset_all)
+        self.btn_actions = QToolButton(self)
+        self.btn_actions.setText("Actions ")
+        self.btn_actions.setToolTip("Reset positions, the player or the view")
+        self.btn_actions.setPopupMode(QToolButton.InstantPopup)
+        self.btn_actions.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.btn_actions.setMenu(self.menu)
+        self.btn_actions.setCursor(Qt.ArrowCursor)
 
     # ---------------------------------------------------------------- coords
     def to_screen(self, p) -> QPointF:
@@ -253,6 +268,11 @@ class PositionsView(QWidget):
             self.changed.emit()
             self.update()
 
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self.btn_actions.adjustSize()
+        self.btn_actions.move(self.width() - self.btn_actions.width() - 8, 8)
+
     def wheelEvent(self, e):
         f = 1.15 if e.angleDelta().y() > 0 else 1 / 1.15
         self.scale = max(0.02, min(4.0, self.scale * f))
@@ -262,5 +282,27 @@ class PositionsView(QWidget):
         self.center = QPointF(*self.engine.spatial.listener)
         self.scale = 0.35
         self.update()
+
+    def reset_positions(self):
+        """Put positions 0-7 back on the default circle and enable them all."""
+        default = Spatial()
+        sp = self.engine.spatial
+        sp.positions = default.positions
+        sp.enabled = default.enabled
+        self.changed.emit()
+        self.update()
+
+    def reset_listener(self):
+        """Move the listener back to the origin, facing +Y."""
+        sp = self.engine.spatial
+        sp.listener = (0.0, 0.0)
+        sp.listener_yaw = 0.0
+        self.changed.emit()
+        self.update()
+
+    def reset_all(self):
+        self.reset_positions()
+        self.reset_listener()
+        self.reset_view()
 
 

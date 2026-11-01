@@ -57,6 +57,8 @@ class Settings:
     theme: str = "system"  # "system", "light" or "dark"
     force_loop: bool = False
     click_to_play: bool = True
+    auto_save: bool = True
+    auto_save_minutes: int = 5
     positions: list | None = None
     enabled_positions: list | None = None
     listener: list | None = None

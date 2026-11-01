@@ -6,6 +6,11 @@ without launching the game**. Edit a soundscape and hear the change right away.
 It is built for Team Fortress 2 mapping and works with any Source game whose
 assets are stored in VPK files (HL2, CS:S, Portal, Garry's Mod, mods...).
 
+> **Developed by AI.** The code and documentation in this project
+> were written by [Claude](https://www.anthropic.com/claude) (Anthropic), an
+> AI model. [Midlou](https://github.com/Midlou) directed the project: deciding
+> the features, testing the app and requesting changes. See [Credits](#credits).
+
 ![Soundscape Previewer](docs/screenshot.png)
 
 ## Why
@@ -55,7 +60,9 @@ it in seconds.
   - duplicate loops (only one instance plays in-game)
   - positioned random sounds without attenuation
 
-- **Light and dark themes.** Follow Windows or pick one in View → Theme.
+- **Light and dark themes.** Follow Windows or pick one in File → Preferences.
+- **Auto save.** Modified files are saved every 5 minutes (configurable in
+  File → Preferences).
 
 See [CHANGELOG.md](CHANGELOG.md) for what changed in each version.
 
@@ -193,12 +200,14 @@ committed), or in `%APPDATA%\SoundscapePreviewer` for the .exe.
 
 ## Credits
 
-Created by [Midlou](https://github.com/Midlou).
+This software was **developed by AI**. Code, the build
+workflow and this README were written by [Claude](https://www.anthropic.com/claude)
+(Anthropic), an AI model, working in Claude Code.
 
-Developed with the help of [Claude](https://www.anthropic.com/claude)
-(Anthropic), an AI assistant that wrote much of the code under Midlou's
-direction and review. Commits it contributed to are marked with a
-`Co-Authored-By: Claude` trailer.
+[Midlou](https://github.com/Midlou) created and directed the project:
+choosing what to build, testing each version and requesting changes. No code
+was written by hand. Commits are marked with a `Co-Authored-By: Claude`
+trailer.
 
 ## License
 
