@@ -207,6 +207,15 @@ class RuleTreeWidget(QTreeWidget):
         self.setAcceptDrops(True)
         self.setDragDropMode(QTreeWidget.DropOnly)
 
+    def mouseDoubleClickEvent(self, e):
+        # A fast second click on a mute/solo checkbox arrives as a double-click.
+        # Treat it as a normal click so it toggles, instead of previewing the rule.
+        index = self.indexAt(e.position().toPoint())
+        if index.isValid() and index.data(Qt.CheckStateRole) is not None:
+            self.mousePressEvent(e)
+            return
+        super().mouseDoubleClickEvent(e)
+
     def dragEnterEvent(self, e):
         if e.mimeData().hasText():
             e.acceptProposedAction()

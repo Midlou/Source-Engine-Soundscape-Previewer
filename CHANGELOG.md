@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.3
+
+- **Undo and redo.** Ctrl+Z / Ctrl+Y (also in the new Edit menu) undo and
+  redo soundscape edits: rule values, adding, removing and moving rules,
+  dropped sounds, renames and Script tab edits. Quick edits are grouped into
+  one step, and undoing back to the saved version clears the unsaved marker.
+- **Follows audio device changes.** When the Windows playback device changes
+  (headphones plugged in, device picked in the taskbar...), the preview moves
+  to the new device and keeps playing, without restarting the app.
+- **Fix:** clicking a rule's mute or solo box quickly started a full-volume
+  preview of its sound that ignored the mute and played to the end. Fast
+  clicks now just toggle the box.
+- **Fix:** editing in the Script tab no longer resets the rules' mute and solo
+  boxes.
+
 ## 1.2
 
 - **Preferences window** (File → Preferences…, Ctrl+,) with Appearance,

@@ -32,6 +32,8 @@ try:
 except Exception:  # noqa: BLE001
     sounddevice = None
 
+from .audio_device import default_output_id
+
 SAMPLE_RATE = 44100
 BLOCK = 1024
 RANDOM_POSITION_DISTANCE = 36.0  # Source plays "position random" sounds 36 units away
@@ -358,12 +360,16 @@ class Engine:
         self.stream = None
         self.error: str | None = None
         self._rng = random.Random()
+        self._device_id: str | None = None
+        self._last_callback = 0.0
+        self._next_retry = 0.0
 
     # ------------------------------------------------------------- stream
     def start(self) -> None:
         if sounddevice is None:
             self.error = "The 'sounddevice' module could not be loaded (no audio output)."
             return
+        self._device_id = default_output_id()
         try:
             self.stream = sounddevice.OutputStream(
                 samplerate=SAMPLE_RATE,
@@ -373,16 +379,48 @@ class Engine:
                 callback=self._callback,
                 latency="low",
             )
+            self._last_callback = time.monotonic()
             self.stream.start()
+            self.error = None
         except Exception as e:  # noqa: BLE001
             self.error = f"Could not open audio device: {e}"
             self.stream = None
 
     def close(self) -> None:
         if self.stream is not None:
-            self.stream.stop()
-            self.stream.close()
+            try:
+                self.stream.abort()  # stop() can wait on a device that is gone
+                self.stream.close()
+            except Exception:  # noqa: BLE001
+                pass
             self.stream = None
+
+    def check_device(self) -> bool:
+        """Reopen the stream if the default output changed or the stream died.
+
+        Call it about once a second from the GUI thread. Playback state lives in
+        the engine, so loops and timers continue on the new device.
+        Returns True when the stream was reopened.
+        """
+        if sounddevice is None:
+            return False
+        now = time.monotonic()
+        changed = default_output_id() != self._device_id
+        stalled = self.stream is not None and (not self.stream.active or now - self._last_callback > 2.0)
+        missing = self.stream is None and now >= self._next_retry
+        if not (changed or stalled or missing):
+            return False
+        self.close()
+        try:
+            # PortAudio only lists devices when it starts, so restart it
+            sounddevice._terminate()
+            sounddevice._initialize()
+        except Exception:  # noqa: BLE001
+            pass
+        self.start()
+        if self.stream is None:
+            self._next_retry = now + 3.0
+        return self.stream is not None
 
     @property
     def now(self) -> float:
@@ -521,6 +559,7 @@ class Engine:
 
     # ------------------------------------------------------------ mixing
     def _callback(self, outdata, frames, _time, _status) -> None:
+        self._last_callback = time.monotonic()
         try:
             mix = self._mix(frames)
         except Exception as e:  # noqa: BLE001 - never let the audio thread die

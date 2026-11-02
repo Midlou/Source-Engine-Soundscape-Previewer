@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 import threading
 
-from PySide6.QtCore import QByteArray, QFileSystemWatcher, QObject, Qt, QTimer, Signal
+from PySide6.QtCore import QByteArray, QEvent, QFileSystemWatcher, QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QDesktopServices, QKeySequence
 from PySide6.QtCore import QLocale, QUrl
 from PySide6.QtWidgets import (
@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 from .. import keyvalues as kv
 from ..audio import DEFAULT_SOUNDSCAPE_FADE, LIVE_EDIT_FADE, Engine, SoundBank, read_wav_loop_points
 from ..gamedata import GameContent
+from ..history import History
 from ..keyvalues import KVNode
 from ..settings import Settings, default_tf2_profile
 from ..soundscape import (
@@ -129,6 +130,9 @@ class MainWindow(QMainWindow):
         self.engine.start()
 
         self.builder = PlanBuilder(self.lookup_soundscape, self.lookup_game_sound)
+        self._histories: dict[int, History] = {}  # id(SoundscapeFile) -> undo history
+        self._history_timer = QTimer(self, singleShot=True, interval=400)  # groups quick edits into one undo step
+        self._history_timer.timeout.connect(self._record_history)
         self._build_ui()
         self._build_actions()
 
@@ -142,6 +146,10 @@ class MainWindow(QMainWindow):
         self._ui_timer = QTimer(self, interval=33)
         self._ui_timer.timeout.connect(self._tick)
         self._ui_timer.start()
+        QApplication.instance().installEventFilter(self)
+        self._device_timer = QTimer(self, interval=1000)
+        self._device_timer.timeout.connect(self._check_audio_device)
+        self._device_timer.start()
         self._auto_save_timer = QTimer(self)
         self._auto_save_timer.timeout.connect(self._auto_save)
         self._update_auto_save_timer()
@@ -315,6 +323,12 @@ class MainWindow(QMainWindow):
         act(m, "Preferences…", self._preferences, "Ctrl+,")
         m.addSeparator()
         act(m, "Exit", self.close)
+        m = mb.addMenu("&Edit")
+        self.act_undo = act(m, "Undo", self._undo)
+        self.act_undo.setShortcuts(QKeySequence.Undo)
+        self.act_redo = act(m, "Redo", self._redo)
+        self.act_redo.setShortcuts(QKeySequence.Redo)
+        self._update_undo_actions()
         m = mb.addMenu("&Soundscape")
         act(m, "New soundscape", self._new_soundscape, "Ctrl+Shift+N")
         act(m, "Duplicate", self._duplicate_soundscape, "Ctrl+D")
@@ -516,6 +530,7 @@ class MainWindow(QMainWindow):
     def _tree_selected(self, item, _prev=None) -> None:
         if item is None:
             return
+        self._flush_history()  # a pending edit belongs to the file selected before
         f = item.data(0, Qt.UserRole)
         name = item.data(0, Qt.UserRole + 1)
         self.current_file = f
@@ -524,6 +539,7 @@ class MainWindow(QMainWindow):
         self.editor.set_soundscape(scape)
         self._sync_script(force=True)
         self._validate()
+        self._update_undo_actions()
         if scape is not None and self.playing and self.chk_follow.isChecked():
             self._play(f, scape.key)
 
@@ -549,6 +565,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Open failed", str(e))
             return None
         self.files.append(f)
+        self._start_history(f)
         self.watcher.addPath(path)
         if select:
             self.current_file = f
@@ -568,6 +585,7 @@ class MainWindow(QMainWindow):
         f = SoundscapeFile()
         f.set_text(NEW_FILE_TEMPLATE)
         self.files.append(f)
+        self._start_history(f)
         self.current_file = f
         self.current_name = f.soundscapes[0].key
         self._refresh_tree()
@@ -589,6 +607,7 @@ class MainWindow(QMainWindow):
             return False
         if f.path not in self.watcher.files():
             self.watcher.addPath(f.path)
+        self._mark_saved(f)
         self._remember_files()
         self._update_file_labels()
         self.statusBar().showMessage(f"Saved {f.path}", 4000)
@@ -624,6 +643,7 @@ class MainWindow(QMainWindow):
                 continue  # new files need "Save as" first
             try:
                 f.save()
+                self._mark_saved(f)
                 saved.append(f)
             except OSError:
                 failed.append(f)
@@ -655,6 +675,7 @@ class MainWindow(QMainWindow):
         if self.playing and self.playing[0] is f:
             self._stop()
         self.files.remove(f)
+        self._histories.pop(id(f), None)
         if f.path:
             self.watcher.removePath(f.path)
         self.current_file = self.files[0] if self.files else None
@@ -695,6 +716,7 @@ class MainWindow(QMainWindow):
         f.disk_mtime = mtime
         self.statusBar().showMessage(f"Reloaded {f.display_name} from disk", 4000)
         self._after_structure_change()
+        self._mark_saved(f)
 
     # ======================================================= soundscapes
     def _unique_name(self, f: SoundscapeFile, base: str) -> str:
@@ -708,6 +730,7 @@ class MainWindow(QMainWindow):
         if self.current_file is None:
             f = SoundscapeFile()
             self.files.append(f)
+            self._start_history(f)
             self.current_file = f
         return self.current_file
 
@@ -802,6 +825,8 @@ class MainWindow(QMainWindow):
         if f is not None and not f.dirty:
             f.dirty = True
             self._update_file_labels()
+        self._history_timer.start()
+        self._update_undo_actions()
         self._sync_script()
         self._replan_timer.start()
         self._validate_timer.start()
@@ -833,7 +858,81 @@ class MainWindow(QMainWindow):
             self.script.set_status(f"⚠ {e} — the last valid version keeps playing.", error=True)
             return
         self._after_structure_change()
+        self._history_timer.start()
+        self._update_undo_actions()
         self.script.set_status("✓ Parsed and applied.")
+
+    # ======================================================= undo / redo
+    def _start_history(self, f: SoundscapeFile) -> None:
+        self._histories[id(f)] = History(f.to_text(), f.soundscapes[0].key if f.soundscapes else None, saved=not f.dirty)
+
+    def _history(self, f: SoundscapeFile) -> History:
+        if id(f) not in self._histories:
+            self._start_history(f)
+        return self._histories[id(f)]
+
+    def _mark_saved(self, f: SoundscapeFile) -> None:
+        self._flush_history()
+        h = self._history(f)
+        h.record(f.to_text(), self.current_name if f is self.current_file else None)
+        h.saved_text = f.to_text()
+
+    def _record_history(self) -> None:
+        self._history_timer.stop()
+        f = self.current_file
+        if f is not None:
+            self._history(f).record(f.to_text(), self.current_name)
+        self._update_undo_actions()
+
+    def _flush_history(self) -> None:
+        if self._history_timer.isActive():
+            self._record_history()
+
+    def _undo(self) -> None:
+        self._step_history(redo=False)
+
+    def _redo(self) -> None:
+        self._step_history(redo=True)
+
+    def _step_history(self, redo: bool) -> None:
+        f = self.current_file
+        if f is None:
+            return
+        self._flush_history()
+        h = self._history(f)
+        state = h.redo() if redo else h.undo()
+        if state is None:
+            self.statusBar().showMessage("Nothing to redo" if redo else "Nothing to undo", 2000)
+            return
+        try:
+            f.set_text(state.text)
+        except kv.KVParseError:
+            f.raw_text = state.text  # an unparsable file as it was opened
+        f.dirty = not h.is_saved(state.text)
+        if state.scape and f.find(state.scape) is not None:
+            self.current_name = state.scape
+        self._after_structure_change()
+        self._sync_script(force=True)
+        self._update_undo_actions()
+        self.statusBar().showMessage("Redo" if redo else "Undo", 1500)
+
+    def _update_undo_actions(self) -> None:
+        f = self.current_file
+        h = self._histories.get(id(f)) if f is not None else None
+        pending = self._history_timer.isActive()
+        self.act_undo.setEnabled(bool(h and (h.can_undo() or pending)))
+        self.act_redo.setEnabled(bool(h and h.can_redo() and not pending))
+
+    def eventFilter(self, obj, e) -> bool:
+        # Ctrl+Z / Ctrl+Y undo soundscape edits everywhere except in the
+        # Script tab, whose text editor keeps its own undo while you type.
+        if e.type() == QEvent.ShortcutOverride and (e.matches(QKeySequence.Undo) or e.matches(QKeySequence.Redo)):
+            focus = QApplication.focusWidget()
+            in_script = focus is not None and (focus is self.script or self.script.isAncestorOf(focus))
+            if not in_script and self.isActiveWindow():
+                e.ignore()  # not taken by the focused widget, so the Edit menu shortcut fires
+                return True
+        return super().eventFilter(obj, e)
 
     def _after_structure_change(self) -> None:
         """The node tree of a file was replaced (text edit or reload)."""
@@ -843,10 +942,13 @@ class MainWindow(QMainWindow):
         if cur is not None and self.editor.scape is not None:
             rules = self.editor.rule_nodes()
             rule_idx = rules.index(cur) if cur in rules else None
+        rule_state = self.editor.rule_state()
         if f is not None and self.current_name and f.find(self.current_name) is None:
             self.current_name = f.soundscapes[0].key if f.soundscapes else None
         self._refresh_tree()
         scape = self.current_scape()
+        self.editor.scape = scape
+        self.editor.restore_rule_state(rule_state)  # keep mute/solo after the text is re-parsed
         self.editor.set_soundscape(scape, rule_idx)
         self._update_file_labels()
         if self.tabs.currentWidget() is not self.script:
@@ -975,6 +1077,18 @@ class MainWindow(QMainWindow):
             return
         self.engine.preview(path, loop)
         self.statusBar().showMessage(f"Previewing {path}", 3000)
+
+    def _check_audio_device(self) -> None:
+        """Follow the Windows default playback device without restarting the app."""
+        if self.engine.check_device():
+            self._shown_engine_error = False
+            try:
+                import sounddevice
+
+                name = sounddevice.query_devices(self.engine.stream.device)["name"]
+            except Exception:  # noqa: BLE001
+                name = "the new device"
+            self.statusBar().showMessage(f"Audio output switched to {name}", 5000)
 
     def _preferences(self) -> None:
         dlg = PreferencesDialog(self.settings, self)

@@ -441,6 +441,27 @@ class SoundscapeEditor(QWidget):
         self.setEnabled(False)
 
     # ------------------------------------------------------------------
+    def rule_state(self) -> tuple[str | None, set[int], set[int], set[int]]:
+        """Mute, solo and expanded rules by position, to restore after the text is re-parsed."""
+        if self.scape is None:
+            return None, set(), set(), set()
+        rules = self.rule_nodes()
+
+        def idx(uids):
+            return {i for i, r in enumerate(rules) if r.uid in uids}
+
+        return self.scape.key.lower(), idx(self.muted), idx(self.soloed), idx(self.expanded_uids)
+
+    def restore_rule_state(self, state) -> None:
+        """Re-apply rule_state() to the rules of a re-parsed soundscape (same name only)."""
+        name, muted, soloed, expanded = state
+        if self.scape is None or name != self.scape.key.lower():
+            return
+        rules = self.rule_nodes()
+        self.muted = {rules[i].uid for i in muted if i < len(rules)}
+        self.soloed = {rules[i].uid for i in soloed if i < len(rules)}
+        self.expanded_uids = {rules[i].uid for i in expanded if i < len(rules)}
+
     def rule_nodes(self) -> list[KVNode]:
         return [c for c in self.scape.children if c.is_block] if self.scape else []
 

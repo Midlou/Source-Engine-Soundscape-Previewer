@@ -45,6 +45,7 @@ it in seconds.
     Comments in your files are preserved.
 - **External editor support.** The file is watched on disk. Save it from
   Notepad++ or VS Code and the preview updates.
+- **Undo and redo** (Ctrl+Z / Ctrl+Y) for every soundscape edit.
 - **Positions map.** A top-down view in Hammer units. Drag the listener and
   positions 0–7 to hear distance falloff (`attenuation` / `soundlevel`) and
   stereo panning. Random sounds flash where they play. Turn a position off to
