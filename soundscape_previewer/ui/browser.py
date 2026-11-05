@@ -191,7 +191,20 @@ class SoundBrowser(QWidget):
         self.ss_use.clicked.connect(lambda: self.ss_list.currentItem() and self.useSoundscape.emit(self.ss_list.currentItem().text()))
 
     # ------------------------------------------------------------------
+    def set_loading(self, name: str) -> None:
+        """Empty and disable the browser until set_content() brings the new sounds."""
+        self.setEnabled(False)
+        self.content = None
+        self._paths = []
+        self._timer.stop()
+        for view in (self.tree, self.results, self.gs_list, self.ss_list):
+            view.clear()
+        self.info.setText(f"Loading {name}…")
+        self.gs_info.setText(f"Loading {name}…")
+        self.ss_info.setText(f"Loading {name}…")
+
     def set_content(self, content: GameContent | None) -> None:
+        self.setEnabled(True)
         self.content = content
         self._paths = sorted(content.sounds) if content else []
         self._build_tree()

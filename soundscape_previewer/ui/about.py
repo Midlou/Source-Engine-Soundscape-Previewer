@@ -9,7 +9,7 @@ REPO_URL = "https://github.com/Midlou/Source-Engine-Soundscape-Previewer"
 
 def about_title() -> str:
     return (
-        f"<h3>Soundscape Previewer {__version__}</h3>"
+        f"<h3>Source Soundscape Previewer {__version__}</h3>"
         "Preview Source engine soundscapes outside the game, with live editing."
     )
 

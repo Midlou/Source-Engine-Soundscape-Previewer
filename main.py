@@ -1,4 +1,4 @@
-"""Soundscape Previewer - preview Source engine soundscapes outside the game."""
+"""Source Soundscape Previewer - preview Source engine soundscapes outside the game."""
 import sys
 
 if __name__ == "__main__":

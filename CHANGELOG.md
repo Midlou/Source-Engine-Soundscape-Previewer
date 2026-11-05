@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.4
+
+- **Soundscape files per game profile.** Each profile remembers its own open
+  files, also between sessions. Switching profiles closes the current files
+  and opens that profile's list, or none if it has no saved files. If there
+  are unsaved changes it asks first, and Cancel stays on the current profile.
+- **Open recent** button next to Open file, listing the last 15 files of the
+  current profile. Missing files are greyed out, and the list can be cleared.
+- **New app icon** on the .exe, the window and the taskbar.
+- **New name in the app:** Source Soundscape Previewer. File names and the
+  settings folder did not change.
+- **Blocked while a profile loads:** the sound browser, Play and sound previews
+  wait until the profile's sounds are ready. Stop and rule editing still work.
+- Open file on a file that is already open now selects it.
+- Playback stops when you switch profiles.
+- **Fix:** switching profiles no longer shows a false number of problems. The
+  Problems tab shows "loading" until the sounds are ready.
+- **Fix:** switching profiles quickly can no longer leave the sounds of the
+  wrong profile loaded.
+
 ## 1.3
 
 - **Undo and redo.** Ctrl+Z / Ctrl+Y (also in the new Edit menu) undo and

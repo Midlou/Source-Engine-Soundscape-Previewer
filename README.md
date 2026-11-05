@@ -1,4 +1,4 @@
-# Source Engine Soundscape Previewer
+# Source Soundscape Previewer
 
 A desktop tool for level designers to **listen to Source engine soundscapes
 without launching the game**. Edit a soundscape and hear the change right away.
@@ -6,12 +6,10 @@ without launching the game**. Edit a soundscape and hear the change right away.
 It is built for Team Fortress 2 mapping and works with any Source game whose
 assets are stored in VPK files (HL2, CS:S, Portal, Garry's Mod, mods...).
 
-> **Developed by AI.** The code and documentation in this project
-> were written by [Claude](https://www.anthropic.com/claude) (Anthropic), an
-> AI model. [Midlou](https://github.com/Midlou) directed the project: deciding
-> the features, testing the app and requesting changes. See [Credits](#credits).
+Questions and feedback are welcome in the
+[TF2Maps thread](https://tf2maps.net/threads/tool-source-soundscape-previewer.56763/).
 
-![Soundscape Previewer](docs/screenshot.png)
+![Source Soundscape Previewer](docs/screenshot.png)
 
 ## Why
 
@@ -27,7 +25,8 @@ it in seconds.
   are heard right away, without restarting the loops that are already playing.
 - **Game profiles.** Create a profile per game (e.g. *Team Fortress 2*) and
   choose which `_dir.vpk` files and loose content folders it uses. A TF2 profile
-  is detected and created automatically from your Steam libraries.
+  is detected and created automatically from your Steam libraries. Each profile
+  remembers its own open soundscape files, also between sessions.
 - **Sound browser.** Search and preview all sounds in the profile's VPKs
   (single-click or double-click to play). It
   shows duration, sample rate, which VPK each sound comes from, and whether a

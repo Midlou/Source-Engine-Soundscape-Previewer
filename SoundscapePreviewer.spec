@@ -22,7 +22,7 @@ a = Analysis(
     ["main.py"],
     pathex=[],
     binaries=[],
-    datas=[("LICENSE", "."), ("README.md", ".")],
+    datas=[("LICENSE", "."), ("README.md", "."), ("assets/logo-ssp.png", "assets")],
     hiddenimports=[],
     hookspath=[],
     runtime_hooks=[],
@@ -56,5 +56,6 @@ exe = EXE(
     name="SoundscapePreviewer",
     console=False,
     upx=False,
+    icon="assets/logo-ssp.ico",
 )
 coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="SoundscapePreviewer")

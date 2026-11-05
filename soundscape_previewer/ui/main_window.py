@@ -5,7 +5,7 @@ import os
 import threading
 
 from PySide6.QtCore import QByteArray, QEvent, QFileSystemWatcher, QObject, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QDesktopServices, QKeySequence
+from PySide6.QtGui import QAction, QDesktopServices, QIcon, QKeySequence
 from PySide6.QtCore import QLocale, QUrl
 from PySide6.QtWidgets import (
     QApplication,
@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDockWidget,
     QFileDialog,
+    QHBoxLayout,
     QHeaderView,
     QInputDialog,
     QLabel,
@@ -36,7 +37,7 @@ from ..audio import DEFAULT_SOUNDSCAPE_FADE, LIVE_EDIT_FADE, Engine, SoundBank, 
 from ..gamedata import GameContent
 from ..history import History
 from ..keyvalues import KVNode
-from ..settings import Settings, default_tf2_profile
+from ..settings import ROOT, Profile, Settings, default_tf2_profile
 from ..soundscape import (
     RULE_LOOPING,
     RULE_RANDOM,
@@ -92,6 +93,9 @@ NEW_FILE_TEMPLATE = """// Soundscapes for my map.
 """
 
 
+MAX_RECENT_FILES = 15
+
+
 class _Loader(QObject):
     progress = Signal(int, int, str)
     finished = Signal(object, str)
@@ -100,7 +104,7 @@ class _Loader(QObject):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Soundscape Previewer")
+        self.setWindowTitle("Source Soundscape Previewer")
         self.resize(1500, 900)
         self.settings = Settings.load()
         if self.settings.theme not in THEMES:
@@ -130,6 +134,7 @@ class MainWindow(QMainWindow):
         self.engine.start()
 
         self.builder = PlanBuilder(self.lookup_soundscape, self.lookup_game_sound)
+        self._profile_loading = False  # self.content still belongs to the previous profile
         self._histories: dict[int, History] = {}  # id(SoundscapeFile) -> undo history
         self._history_timer = QTimer(self, singleShot=True, interval=400)  # groups quick edits into one undo step
         self._history_timer.timeout.connect(self._record_history)
@@ -162,16 +167,19 @@ class MainWindow(QMainWindow):
             self.resizeDocks([self.dock_files, self.dock_browser], [260, 460], Qt.Horizontal)
             self.resizeDocks([self.dock_positions], [280], Qt.Vertical)
 
-        for path in self.settings.open_files:
-            if os.path.isfile(path):
-                self._open_path(path, select=False)
-        self._refresh_tree()
         if not self.settings.profiles:
             tf2 = default_tf2_profile()
             if tf2:
                 self.settings.profiles.append(tf2)
                 self.settings.active_profile = tf2.name
                 self.statusBar().showMessage("Created a 'Team Fortress 2' profile from your Steam install.", 8000)
+        prof = self._active_profile()
+        if prof is not None and self.settings.open_files:
+            # 1.3 and older kept one list for all profiles
+            prof.open_files = prof.open_files or self.settings.open_files
+            self.settings.open_files = []
+        self._open_profile_files(prof)
+        self._refresh_tree()
         self._fill_profile_combo()
         self._load_profile()
         if self.engine.error:
@@ -191,10 +199,21 @@ class MainWindow(QMainWindow):
         ll = QVBoxLayout(left)
         ll.setContentsMargins(4, 4, 4, 4)
         ll.addWidget(self.tree, 1)
-        for text, slot in (("New soundscape", self._new_soundscape), ("New file", self._new_file), ("Open file…", self._open_file)):
+        for text, slot in (("New soundscape", self._new_soundscape), ("New file", self._new_file)):
             b = QPushButton(text)
             b.clicked.connect(slot)
             ll.addWidget(b)
+        row = QHBoxLayout()
+        b = QPushButton("Open file…")
+        b.clicked.connect(self._open_file)
+        row.addWidget(b)
+        self.recent_menu = QMenu(self)
+        self.recent_menu.setToolTipsVisible(True)
+        self.recent_menu.aboutToShow.connect(self._fill_recent_menu)
+        self.btn_recent = QPushButton("Open recent")
+        self.btn_recent.setMenu(self.recent_menu)
+        row.addWidget(self.btn_recent)
+        ll.addLayout(row)
         dock = QDockWidget("Soundscapes", self)
         dock.setObjectName("dock_files")
         dock.setWidget(left)
@@ -335,7 +354,7 @@ class MainWindow(QMainWindow):
         act(m, "Rename…", self._rename_dialog, "F2")
         act(m, "Delete", self._delete_soundscape)
         m.addSeparator()
-        act(m, "Play", self._play_selected, "F5")
+        self.act_play = act(m, "Play", self._play_selected, "F5")
         act(m, "Stop", self._stop, "F6")
         m = mb.addMenu("&Profiles")
         act(m, "Manage profiles…", self._manage_profiles)
@@ -346,7 +365,7 @@ class MainWindow(QMainWindow):
         act(m, "Reset positions view", self.positions.reset_view)
         m = mb.addMenu("&Help")
         act(m, "Soundscape documentation (wiki)", lambda: QDesktopServices.openUrl(QUrl(WIKI_URL)))
-        act(m, "About Soundscape Previewer", self._about)
+        act(m, "About Source Soundscape Previewer", self._about)
 
     # =========================================================== profiles
     def _fill_profile_combo(self) -> None:
@@ -363,30 +382,97 @@ class MainWindow(QMainWindow):
     def _profile_chosen(self, _i: int) -> None:
         name = self.profile_combo.currentText()
         if self.settings.profile(name) and name != self.settings.active_profile:
+            if not self._leave_files():
+                self._fill_profile_combo()  # canceled: stay on the current profile
+                return
             self.settings.active_profile = name
             self.settings.save()
             self._load_profile()
+            self._show_profile_files()
 
     def _manage_profiles(self) -> None:
+        old = self._active_profile()
         d = ProfilesDialog(self.settings.profiles, self.settings.active_profile, self)
-        if d.exec():
-            self.settings.profiles = d.profiles
-            self.settings.active_profile = d.active if self.settings.profile(d.active) else (
-                d.profiles[0].name if d.profiles else None
-            )
-            self.settings.save()
-            self._fill_profile_combo()
-            self._load_profile()
+        if not d.exec():
+            return
+        names = [p.name for p in d.profiles]
+        new_name = d.active if d.active in names else (names[0] if names else None)
+        kept = d.renames.get(old.name, old.name) if old else None  # the current profile's name after the edits
+        switching = old is not None and new_name != kept
+        if switching:
+            if self._leave_files():
+                if kept in names:  # the dialog's copy must get what was saved just now
+                    d.profiles[names.index(kept)].open_files = list(old.open_files)
+                    d.profiles[names.index(kept)].recent_files = list(old.recent_files)
+            elif kept in names:
+                new_name, switching = kept, False  # canceled: keep the edits, stay on this profile
+            else:
+                return  # canceled, and the current profile was deleted: drop the edits
+        self.settings.profiles = d.profiles
+        self.settings.active_profile = new_name
+        if not switching:
+            self._remember_files()  # files opened before the first profile now belong to it
+        self.settings.save()
+        self._fill_profile_combo()
+        self._load_profile()
+        if switching:
+            self._show_profile_files()
 
-    def _load_profile(self) -> None:
+    def _active_profile(self) -> Profile | None:
         prof = self.settings.profile(self.settings.active_profile)
         if prof is None and self.settings.profiles:
             prof = self.settings.profiles[0]
             self.settings.active_profile = prof.name
+        return prof
+
+    def _leave_files(self) -> bool:
+        """Close all files before changing profile. False if the user canceled."""
+        for f in list(self.files):
+            if not self._confirm_discard(f):
+                return False
+        self._remember_files()
+        self._stop()
+        self._history_timer.stop()
+        for f in self.files:
+            if f.path:
+                self.watcher.removePath(f.path)
+        self.files.clear()
+        self._histories.clear()
+        self.current_file = None
+        self.current_name = None
+        return True
+
+    def _open_profile_files(self, prof: Profile | None) -> None:
+        for path in list(prof.open_files if prof else self.settings.open_files):
+            if os.path.isfile(path):
+                self._open_path(path, select=False)
+
+    def _show_profile_files(self) -> None:
+        """Open the active profile's files and select the first soundscape."""
+        self._open_profile_files(self._active_profile())
+        self.current_file = self.files[0] if self.files else None
+        scapes = self.current_file.soundscapes if self.current_file else []
+        self.current_name = scapes[0].key if scapes else None
+        self._refresh_tree()
+        if self.tree.currentItem() is not None:
+            self._tree_selected(self.tree.currentItem())
+        else:
+            self.editor.set_soundscape(None)
+            self._sync_script(force=True)
+            self._validate()
+            self._update_undo_actions()
+
+    def _load_profile(self) -> None:
+        prof = self._active_profile()
         if prof is None:
             self._set_content(None, "")
             self.status_profile.setText("No game profile — Profiles → Manage profiles")
             return
+        self._profile_loading = True
+        self._validate()
+        self.browser.set_loading(prof.name)
+        self.btn_play.setEnabled(False)
+        self.act_play.setEnabled(False)
         loader = _Loader(self)
         loader.progress.connect(self._load_progress)
         loader.finished.connect(self._set_content)
@@ -412,6 +498,11 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Reading {os.path.basename(path)}…")
 
     def _set_content(self, content: GameContent | None, name: str) -> None:
+        if name and name != self.settings.active_profile:
+            return  # the user switched again while this profile was loading
+        self._profile_loading = False
+        self.btn_play.setEnabled(True)
+        self.act_play.setEnabled(True)
         self.load_progress.hide()
         self.content = content
         self._loop_cache.clear()
@@ -552,6 +643,13 @@ class MainWindow(QMainWindow):
         path = os.path.abspath(path)
         for f in self.files:
             if f.path and os.path.normcase(f.path) == os.path.normcase(path):
+                if select:
+                    self._add_recent(path)
+                    self.current_file = f
+                    self.current_name = f.soundscapes[0].key if f.soundscapes else None
+                    self._refresh_tree()
+                    self._tree_selected(self.tree.currentItem())
+                    self._remember_files()
                 return f
         try:
             f = SoundscapeFile.load(path)
@@ -568,6 +666,7 @@ class MainWindow(QMainWindow):
         self._start_history(f)
         self.watcher.addPath(path)
         if select:
+            self._add_recent(path)
             self.current_file = f
             self.current_name = f.soundscapes[0].key if f.soundscapes else None
             self._refresh_tree()
@@ -685,7 +784,41 @@ class MainWindow(QMainWindow):
         self._remember_files()
 
     def _remember_files(self) -> None:
-        self.settings.open_files = [f.path for f in self.files if f.path]
+        owner = self._active_profile() or self.settings
+        owner.open_files = [f.path for f in self.files if f.path]
+        known = {os.path.normcase(p) for p in owner.recent_files}
+        new = [p for p in owner.open_files if os.path.normcase(p) not in known]
+        owner.recent_files = (owner.recent_files + new)[:MAX_RECENT_FILES]
+        self.settings.save()
+
+    def _add_recent(self, path: str) -> None:
+        """Move a file to the top of the current profile's recent list."""
+        owner = self._active_profile() or self.settings
+        rest = [p for p in owner.recent_files if os.path.normcase(p) != os.path.normcase(path)]
+        owner.recent_files = [path] + rest
+
+    def _fill_recent_menu(self) -> None:
+        m = self.recent_menu
+        m.clear()
+        owner = self._active_profile() or self.settings
+        names = [os.path.basename(p) for p in owner.recent_files]
+        for path, name in zip(owner.recent_files, names):
+            text = path if names.count(name) > 1 else name  # same name in two folders
+            a = m.addAction(text.replace("&", "&&"), lambda p=path: self._open_path(p))
+            a.setToolTip(path)
+            if not os.path.isfile(path):
+                a.setText(a.text() + " (missing)")
+                a.setEnabled(False)
+        if owner.recent_files:
+            m.addSeparator()
+            m.addAction("Clear list", self._clear_recent)
+        else:
+            m.addAction("No recent files").setEnabled(False)
+
+    def _clear_recent(self) -> None:
+        if QMessageBox.question(self, "Clear list", "Clear the list of recent files? Your files are not deleted.") != QMessageBox.Yes:
+            return
+        (self._active_profile() or self.settings).recent_files = []
         self.settings.save()
 
     def _file_changed_on_disk(self, path: str) -> None:
@@ -995,7 +1128,15 @@ class MainWindow(QMainWindow):
         self._select_after_change(f, node.key)
 
     # ============================================================ playback
+    def _still_loading(self) -> bool:
+        """True (with a status message) while the profile's sounds are not ready."""
+        if self._profile_loading:
+            self.statusBar().showMessage(f"Still loading {self.settings.active_profile}…", 2000)
+        return self._profile_loading
+
     def _play(self, f: SoundscapeFile | None, name: str) -> None:
+        if self._still_loading():
+            return
         changed = self.playing is None or self.playing[0] is not f or self.playing[1].lower() != name.lower()
         self.playing = (f, name)
         if changed:
@@ -1064,6 +1205,8 @@ class MainWindow(QMainWindow):
         self.engine.trigger(str(idx))
 
     def _preview(self, path: str, loop: bool) -> None:
+        if self._still_loading():
+            return
         if not is_wave_file(path):
             gs = self.lookup_game_sound(path.strip().lower())
             if gs is None:
@@ -1167,6 +1310,9 @@ class MainWindow(QMainWindow):
         if f is None:
             self.tabs.setTabText(2, "Problems")
             return
+        if self._profile_loading:
+            self.tabs.setTabText(2, "Problems (loading…)")  # checked when the profile's sounds are ready
+            return
         others: dict[str, str] = {}
         for other in self.files:
             if other is not f:
@@ -1219,7 +1365,7 @@ class MainWindow(QMainWindow):
 
     def _about(self) -> None:
         box = QMessageBox(self)
-        box.setWindowTitle("About Soundscape Previewer")
+        box.setWindowTitle("About Source Soundscape Previewer")
         box.setTextFormat(Qt.RichText)
         box.setText(about_title())
         box.setInformativeText(about_body())
@@ -1244,8 +1390,14 @@ def run() -> int:
     # Source scripts use "." decimals; don't let a system locale turn them into ","
     QLocale.setDefault(QLocale(QLocale.English, QLocale.UnitedStates))
     app = QApplication.instance() or QApplication(sys.argv)
-    app.setApplicationName("Soundscape Previewer")
+    app.setApplicationName("Source Soundscape Previewer")
     app.setStyle("Fusion")
+    app.setWindowIcon(QIcon(os.path.join(ROOT, "assets", "logo-ssp.png")))
+    if sys.platform == "win32":
+        # without its own id, the taskbar groups the app under python.exe and shows that icon
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Midlou.SoundscapePreviewer")
     w = MainWindow()
     w.show()
     return app.exec()

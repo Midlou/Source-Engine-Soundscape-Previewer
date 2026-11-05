@@ -78,5 +78,5 @@ jobs:
           printf '\nDownload **%s**, extract it anywhere and run **SoundscapePreviewer.exe**. Settings are stored in %%APPDATA%%\\SoundscapePreviewer.\n' "$ZIP" >> notes.md
           gh release create "v$VERSION" "$ZIP" \
             --target "$GITHUB_SHA" \
-            --title "Soundscape Previewer $VERSION" \
+            --title "Source Soundscape Previewer $VERSION" \
             --notes-file notes.md

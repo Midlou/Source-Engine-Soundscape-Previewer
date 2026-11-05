@@ -34,6 +34,8 @@ class Profile:
     name: str
     vpks: list[VpkRef] = field(default_factory=list)
     folders: list[str] = field(default_factory=list)
+    open_files: list[str] = field(default_factory=list)  # soundscape files to reopen with this profile
+    recent_files: list[str] = field(default_factory=list)  # most recent first
 
     def enabled_vpks(self) -> list[str]:
         return [v.path for v in self.vpks if v.enabled]
@@ -44,6 +46,8 @@ class Profile:
             d.get("name", "Profile"),
             [VpkRef(v["path"], v.get("enabled", True)) for v in d.get("vpks", [])],
             list(d.get("folders", [])),
+            list(d.get("open_files", [])),
+            list(d.get("recent_files", [])),
         )
 
 
@@ -51,7 +55,8 @@ class Profile:
 class Settings:
     profiles: list[Profile] = field(default_factory=list)
     active_profile: str | None = None
-    open_files: list[str] = field(default_factory=list)
+    open_files: list[str] = field(default_factory=list)  # only used while there is no profile
+    recent_files: list[str] = field(default_factory=list)  # only used while there is no profile
     master_volume: float = 0.8
     auto_play: bool = True
     theme: str = "system"  # "system", "light" or "dark"

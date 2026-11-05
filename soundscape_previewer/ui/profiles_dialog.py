@@ -32,6 +32,7 @@ class ProfilesDialog(QDialog):
         self.resize(900, 520)
         self.profiles = copy.deepcopy(profiles)
         self.active = active
+        self.renames: dict[str, str] = {}  # name when the dialog opened -> current name
 
         lay = QVBoxLayout(self)
         split = QSplitter(Qt.Horizontal)
@@ -168,6 +169,8 @@ class ProfilesDialog(QDialog):
         if p:
             c = copy.deepcopy(p)
             c.name = self._unique(p.name + " copy")
+            c.open_files = []
+            c.recent_files = []
             self.profiles.append(c)
             self._fill_list(c.name)
 
@@ -177,7 +180,10 @@ class ProfilesDialog(QDialog):
             return
         name, ok = QInputDialog.getText(self, "Rename profile", "Name:", text=p.name)
         if ok and name.strip() and name.strip() != p.name:
+            old = p.name
             p.name = self._unique(name.strip())
+            original = next((k for k, v in self.renames.items() if v == old), old)
+            self.renames[original] = p.name
             self._fill_list(p.name)
 
     def _delete(self):

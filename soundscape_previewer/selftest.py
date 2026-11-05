@@ -62,6 +62,13 @@ def _checks(log) -> None:
     w.hide()
     log("main window: ok")
 
+    from PySide6.QtGui import QImage
+
+    from .settings import ROOT
+
+    assert not QImage(os.path.join(ROOT, "assets", "logo-ssp.png")).isNull(), "app icon not bundled"
+    log("app icon: ok")
+
 
 def run(log_path: str | None = None) -> int:
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
